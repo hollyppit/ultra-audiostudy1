@@ -68,22 +68,48 @@
       d.cards = d.cards.filter((c) => c.deck_id !== id);
       local.write(d);
     },
-    async cards(deckId) {
+    async renameDeck(id, title) {
       if (this.cloud()) {
-        const { data, error } = await sb.from('cards').select('*').eq('deck_id', deckId).order('created_at');
-        if (error) throw error;
-        return data;
-      }
-      return local.read().cards.filter((c) => c.deck_id === deckId);
-    },
-    async addCards(deckId, arr) {
-      if (this.cloud()) {
-        const { error } = await sb.from('cards').insert(arr.map((c) => ({ deck_id: deckId, ...c })));
+        const { error } = await sb.from('decks').update({ title }).eq('id', id);
         if (error) throw error;
         return;
       }
       const d = local.read();
-      arr.forEach((c) => d.cards.push({ id: uid(), deck_id: deckId, wrong_count: 0, created_at: new Date().toISOString(), ...c }));
+      const deck = d.decks.find((x) => x.id === id);
+      if (deck) deck.title = title;
+      local.write(d);
+    },
+    async cards(deckId) {
+      if (this.cloud()) {
+        // position 컬럼이 아직 없는 DB에서도 동작하도록 created_at 정렬로 폴백
+        let r = await sb.from('cards').select('*').eq('deck_id', deckId).order('position', { nullsFirst: false }).order('created_at');
+        if (r.error) r = await sb.from('cards').select('*').eq('deck_id', deckId).order('created_at');
+        if (r.error) throw r.error;
+        return r.data;
+      }
+      return local.read().cards.filter((c) => c.deck_id === deckId).sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9));
+    },
+    async addCards(deckId, arr, start = 0) {
+      if (this.cloud()) {
+        const rows = arr.map((c, i) => ({ deck_id: deckId, position: start + i, ...c }));
+        let { error } = await sb.from('cards').insert(rows);
+        if (error) ({ error } = await sb.from('cards').insert(rows.map(({ position, ...rest }) => rest)));
+        if (error) throw error;
+        return;
+      }
+      const d = local.read();
+      arr.forEach((c, i) => d.cards.push({ id: uid(), deck_id: deckId, wrong_count: 0, created_at: new Date().toISOString(), position: start + i, ...c }));
+      local.write(d);
+    },
+    async reorder(ids) {
+      if (this.cloud()) {
+        const results = await Promise.all(ids.map((id, i) => sb.from('cards').update({ position: i }).eq('id', id)));
+        const bad = results.find((r) => r.error);
+        if (bad) throw new Error('순서를 저장하려면 Supabase cards 테이블에 position 컬럼이 필요해요. (supabase-position.sql 참고)');
+        return;
+      }
+      const d = local.read();
+      ids.forEach((id, i) => { const c = d.cards.find((x) => x.id === id); if (c) c.position = i; });
       local.write(d);
     },
     async patchCard(id, patch) {
@@ -147,7 +173,7 @@
     try {
       stop();
       let decks = await db.decks();
-      if (!decks.length) decks = [await db.addDeck('내 첫 덱')];
+      if (!decks.length) decks = [await db.addDeck('내 첫 폴더')];
       state.decks = decks;
       const saved = localStorage.getItem('uas.deck');
       state.deckId = decks.find((d) => d.id === saved)?.id || decks[0].id;
@@ -160,6 +186,8 @@
 
   function renderDecks() {
     $('#deckSelect').innerHTML = state.decks.map((d) => `<option value="${esc(d.id)}" ${d.id === state.deckId ? 'selected' : ''}>${esc(d.title)}</option>`).join('');
+    const deck = state.decks.find((d) => d.id === state.deckId);
+    $('#saveTarget').textContent = deck ? `만든 카드는 "${deck.title}" 폴더에 저장돼요.` : '';
   }
 
   async function loadCards() {
@@ -226,7 +254,7 @@
       .filter((c) => c.question && c.answer);
     if (!cards.length) return toast('저장할 카드가 없어요.');
     try {
-      await db.addCards(state.deckId, cards);
+      await db.addCards(state.deckId, cards, state.cards.length);
       state.draft = []; $('#memo').value = ''; renderDraft();
       await loadCards();
       toast(cards.length + '장 저장했어요.');
@@ -235,20 +263,136 @@
   }
 
   /* ---------- 카드 관리 ---------- */
+  let editId = null;
+
   function renderManage() {
+    const deck = state.decks.find((d) => d.id === state.deckId);
+    $('#folderName').textContent = deck ? deck.title : '';
+    $('#folderMeta').textContent = `카드 ${state.cards.length}장`;
+    $('#manageHint').hidden = state.cards.length < 2;
+
     const el = $('#cardList');
-    el.innerHTML = state.cards.length
-      ? state.cards.map((c) => `
-        <article class="item">
-          <b>${esc(c.question)}</b>
-          <span class="ans">${esc(c.answer)}</span>
-          ${c.explanation ? `<span>${esc(c.explanation)}</span>` : ''}
-          <div class="foot">
-            <span>${c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}</span>
-            <button class="link danger" data-del-card="${esc(c.id)}">삭제</button>
+    if (!state.cards.length) {
+      el.innerHTML = '<p class="empty">이 폴더에는 아직 카드가 없어요.<br>"카드 만들기"에서 메모를 붙여넣어 보세요.</p>';
+      return;
+    }
+    el.innerHTML = state.cards.map((c) => c.id === editId
+      ? `<article class="item editing" data-id="${esc(c.id)}">
+          <div class="body">
+            <label>문제<textarea data-k="question" rows="2">${esc(c.question)}</textarea></label>
+            <label>정답<textarea data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
+            <label>해설<textarea data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>
+            <div class="row">
+              <button class="primary" data-act="save">저장</button>
+              <button class="link" data-act="cancel">취소</button>
+            </div>
           </div>
-        </article>`).join('')
-      : '<p class="empty">아직 카드가 없어요. "카드 만들기"에서 메모를 붙여넣어 보세요.</p>';
+        </article>`
+      : `<article class="item" data-id="${esc(c.id)}">
+          <button class="grip" tabindex="0" aria-label="순서 이동: 끌거나 위아래 화살표 키" title="끌어서 순서 바꾸기">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </button>
+          <div class="body">
+            <b>${esc(c.question)}</b>
+            <span class="ans">${esc(c.answer)}</span>
+            ${c.explanation ? `<span class="exp">${esc(c.explanation)}</span>` : ''}
+            <div class="foot">
+              <span>${c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}</span>
+              <span class="acts">
+                <button class="link" data-act="edit">편집</button>
+                <button class="link danger" data-act="del">삭제</button>
+              </span>
+            </div>
+          </div>
+        </article>`).join('');
+  }
+
+  async function saveEdit(id, itemEl) {
+    const card = state.cards.find((c) => c.id === id);
+    if (!card) return;
+    const val = (k) => itemEl.querySelector(`[data-k="${k}"]`).value.trim();
+    const patch = { question: val('question'), answer: val('answer'), explanation: val('explanation') };
+    if (!patch.question || !patch.answer) return toast('문제와 정답은 비워둘 수 없어요.');
+    try {
+      await db.patchCard(id, patch);
+      Object.assign(card, patch); // 재생 큐가 같은 객체를 참조하므로 함께 갱신됨
+      editId = null; renderManage(); renderPlayer(null, false);
+      toast('카드를 수정했어요.');
+    } catch (e) { toast('저장 실패: ' + (e.message || e)); }
+  }
+
+  async function deleteCard(id) {
+    const card = state.cards.find((c) => c.id === id);
+    if (!card || !confirm(`이 카드를 삭제할까요?\n\n${card.question}`)) return;
+    try {
+      if (state.playing) stop();
+      await db.delCard(id);
+      await loadCards();
+      toast('카드를 삭제했어요.');
+    } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
+  }
+
+  /* ---------- 카드 순서 (드래그 / 키보드) ---------- */
+  let orderTimer;
+  async function commitOrder() {
+    const ids = [...$('#cardList').querySelectorAll('.item[data-id]')].map((el) => el.dataset.id);
+    const byId = new Map(state.cards.map((c) => [c.id, c]));
+    const next = ids.map((id) => byId.get(id)).filter(Boolean);
+    if (next.length !== state.cards.length || next.every((c, i) => c === state.cards[i])) return;
+    if (state.playing) stop();
+    state.cards = next;
+    try {
+      await db.reorder(ids);
+      state.cards.forEach((c, i) => { c.position = i; });
+      buildQueue(); renderPlayer(null, false);
+      toast(settings.shuffle ? '순서를 저장했어요. (섞어서 재생 중에는 무작위로 들려요)' : '순서를 저장했어요.');
+    } catch (e) {
+      toast(e.message || '순서 저장 실패');
+      await loadCards();
+    }
+  }
+
+  function initReorder() {
+    const list = $('#cardList');
+
+    list.addEventListener('pointerdown', (e) => {
+      const grip = e.target.closest('.grip');
+      if (!grip || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      e.preventDefault();
+      const item = grip.closest('.item');
+      item.classList.add('dragging');
+      const move = (ev) => {
+        const y = ev.clientY;
+        const next = [...list.querySelectorAll('.item:not(.dragging)')].find((it) => {
+          const r = it.getBoundingClientRect();
+          return y < r.top + r.height / 2;
+        }) || null;
+        if (next !== item.nextElementSibling) list.insertBefore(item, next);
+        if (y < 90) window.scrollBy(0, -14); else if (y > window.innerHeight - 130) window.scrollBy(0, 14);
+      };
+      const end = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', end);
+        document.removeEventListener('pointercancel', end);
+        item.classList.remove('dragging');
+        commitOrder();
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', end);
+      document.addEventListener('pointercancel', end);
+    });
+
+    list.addEventListener('keydown', (e) => {
+      const grip = e.target.closest('.grip');
+      if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      e.preventDefault();
+      const item = grip.closest('.item');
+      if (e.key === 'ArrowUp' && item.previousElementSibling) list.insertBefore(item, item.previousElementSibling);
+      else if (e.key === 'ArrowDown' && item.nextElementSibling) list.insertBefore(item.nextElementSibling, item);
+      grip.focus();
+      clearTimeout(orderTimer);
+      orderTimer = setTimeout(commitOrder, 600);
+    });
   }
 
   /* ---------- 재생 큐 ---------- */
@@ -482,16 +626,16 @@
       try { await loadCards(); } catch (err) { toast('불러오기 실패: ' + err.message); }
     };
     $('#newDeck').onclick = async () => {
-      const title = (prompt('새 덱 이름 (예: 정보처리기사 필기)') || '').trim();
+      const title = (prompt('새 폴더 이름 (예: 지게차운전기능사)') || '').trim();
       if (!title) return;
       try {
         const deck = await db.addDeck(title);
         state.decks.push(deck); state.deckId = deck.id; localStorage.setItem('uas.deck', deck.id);
-        stop(); renderDecks(); await loadCards();
+        stop(); renderDecks(); await loadCards(); showView('make');
       } catch (e) { toast('덱 만들기 실패: ' + (e.message || e)); }
     };
     $('#delDeck').onclick = async () => {
-      if (!confirm('이 덱과 안의 카드를 모두 삭제할까요?')) return;
+      if (!confirm('이 폴더와 안의 카드를 모두 삭제할까요? 되돌릴 수 없어요.')) return;
       try { await db.delDeck(state.deckId); await loadDecks(); } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
     };
 
@@ -507,11 +651,29 @@
       if (t.dataset.del !== undefined) { state.draft.splice(Number(t.dataset.del), 1); renderDraft(); }
     });
 
-    $('#cardList').addEventListener('click', async (e) => {
-      const id = e.target.dataset.delCard;
-      if (!id) return;
-      try { await db.delCard(id); await loadCards(); } catch (err) { toast('삭제 실패: ' + (err.message || err)); }
+    $('#cardList').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-act]');
+      const item = e.target.closest('.item');
+      if (!btn || !item) return;
+      const id = item.dataset.id;
+      if (btn.dataset.act === 'edit') { editId = id; renderManage(); $('#cardList').querySelector('.editing textarea')?.focus(); }
+      else if (btn.dataset.act === 'cancel') { editId = null; renderManage(); }
+      else if (btn.dataset.act === 'save') saveEdit(id, item);
+      else if (btn.dataset.act === 'del') deleteCard(id);
     });
+    initReorder();
+
+    $('#renameDeck').onclick = async () => {
+      const deck = state.decks.find((d) => d.id === state.deckId);
+      if (!deck) return;
+      const title = (prompt('폴더 이름', deck.title) || '').trim();
+      if (!title || title === deck.title) return;
+      try {
+        await db.renameDeck(deck.id, title);
+        deck.title = title; renderDecks(); renderManage();
+        toast('폴더 이름을 바꿨어요.');
+      } catch (e) { toast('이름 변경 실패: ' + (e.message || e)); }
+    };
 
     $('#play').onclick = toggle;
     $('#prev').onclick = () => jump(-1);
