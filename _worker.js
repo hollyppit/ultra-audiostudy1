@@ -302,14 +302,24 @@ async function handleTts({ request, env, ctx }) {
   const auth = await requireUser(request, env);
   if (!auth.ok) return json({ error: auth.reason }, 401);
 
-  let text, voiceId;
-  try { ({ text, voice: voiceId } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  let text, voiceId, warm;
+  try { ({ text, voice: voiceId, warm } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
   const voice = VOICES[voiceId] || { name: env.TTS_VOICE || VOICES.f1.name };
   if (!text || typeof text !== 'string') return json({ error: '텍스트가 비어 있어요.' }, 400);
   if (text.length > 1000) return json({ error: '한 번에 1,000자까지만 읽을 수 있어요.' }, 400);
 
   const key = await ttsCacheKey(voice, text, env);
   const hit = await cacheGet(env, key);
+
+  // 미리 만들기(warm): 음성 파일은 돌려주지 않고, 저장본이 없으면 합성해서 저장만 합니다.
+  if (warm) {
+    if (hit) { try { await hit.body.cancel(); } catch { /* 이미 닫힘 */ } return json({ ok: true, cached: true }); }
+    const made = await synthesize({ voice, text, env });
+    if (!made.ok) return made;
+    await cachePut(env, key, await made.arrayBuffer(), made.headers.get('content-type') || 'audio/mpeg');
+    return json({ ok: true, cached: false });
+  }
+
   if (hit) {
     return new Response(hit.body, { headers: { 'content-type': hit.type, 'cache-control': 'private, max-age=86400', 'x-tts-cache': 'hit-' + hit.where } });
   }

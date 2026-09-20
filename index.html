@@ -32,6 +32,11 @@
       </button>
     </div>
 
+    <div id="warmStatus" class="warm-status" role="status" aria-live="polite" hidden>
+      <span id="warmText"></span>
+      <button id="warmStop" type="button" class="link">중단</button>
+    </div>
+
     <nav class="tabs" role="tablist" aria-label="화면 전환">
       <button role="tab" data-view="listen" aria-selected="true">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>
@@ -153,6 +158,7 @@
           <label>생각하는 시간(초)
             <input id="sGap" type="number" min="1" max="20" step="1">
           </label>
+          <label class="check"><input id="sWarm" type="checkbox"><span>저장할 때 음성 미리 만들기</span></label>
           <label class="check"><input id="sShuffle" type="checkbox"><span>섞어서 재생</span></label>
           <label class="check"><input id="sWeak" type="checkbox"><span>헷갈린 카드를 더 자주</span></label>
           <label class="check"><input id="sExplain" type="checkbox"><span>해설도 읽기</span></label>
@@ -200,6 +206,10 @@
           <p id="folderMeta" class="sec-sub"></p>
         </div>
         <button id="renameDeck" class="ghost">이름 변경</button>
+      </div>
+      <div class="row warm-row">
+        <button id="warmDeck" type="button" class="ghost">이 폴더 음성 미리 만들기</button>
+        <span class="hint">지금 선택한 목소리로 만들어 둬요. 이미 만든 문장은 건너뛰어요.</span>
       </div>
       <p id="manageHint" class="hint drag-hint" hidden>왼쪽 손잡이를 끌어서 순서를 바꿀 수 있어요. "섞어서 재생"을 끄면 이 순서대로 들려요.</p>
       <div id="cardList" class="cardlist"></div>

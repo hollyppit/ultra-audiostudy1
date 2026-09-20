@@ -18,7 +18,7 @@
   const savedSettings = safeJSON(localStorage.getItem('uas.settings'), {});
   if (savedSettings.ver !== SETTINGS_VER) { delete savedSettings.engine; delete savedSettings.voice; }
   const settings = Object.assign(
-    { engine: 'cloud', voice: DEFAULT_VOICE, rate: 1, gap: 4, shuffle: true, weak: true, explain: true },
+    { engine: 'cloud', voice: DEFAULT_VOICE, warm: true, rate: 1, gap: 4, shuffle: true, weak: true, explain: true },
     savedSettings,
     { ver: SETTINGS_VER }
   );
@@ -340,6 +340,7 @@
       await loadCards();
       toast(cards.length + '개 저장했어요.');
       showView('listen');
+      if (settings.engine === 'cloud' && settings.warm) warmTexts(cards.flatMap(speechTexts)); // 기다리지 않고 백그라운드로
     } catch (e) { toast('저장 실패: ' + (e.message || e)); }
   }
 
@@ -787,6 +788,64 @@
     }
   }
 
+  /* ---------- 음성 미리 만들기 (저장할 때 / 관리 화면에서) ---------- */
+  // 재생할 때 실제로 읽는 문장들과 똑같이 나눠서 서버에 "만들어서 저장만" 요청합니다. (다음 재생부터 바로 나옴)
+  function speechTexts(c) {
+    if (c.kind === 'note') return [c.question, ...splitSpeech(c.answer)].filter(Boolean);
+    return [c.question, c.answer, settings.explain ? c.explanation : ''].filter(Boolean);
+  }
+
+  let warmRun = 0; // 0 이면 대기 중, 값이 바뀌면 이전 작업은 스스로 멈춤
+
+  function warmUi(msg) {
+    $('#warmStatus').hidden = !msg;
+    $('#warmText').textContent = msg || '';
+  }
+
+  async function warmTexts(all) {
+    const texts = [...new Set(all.filter(Boolean))];
+    if (!texts.length) return;
+    const token = ++warmRun;
+    const total = texts.length;
+    let next = 0, done = 0, created = 0, failed = 0, streak = 0, aborted = false, lastMsg = '';
+    warmUi(`음성 미리 만드는 중… 0 / ${total}`);
+
+    const one = async (text) => {
+      let lastErr;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch('/api/tts', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text, voice: settings.voice, warm: true }) });
+          const j = await res.json().catch(() => ({}));
+          if (res.ok) { if (!j.cached) created++; return; }
+          if (res.status === 400) return; // 글자 수 초과 등은 건너뜀
+          lastErr = new Error(j.error || 'HTTP ' + res.status);
+          lastErr.fatal = res.status === 401 || res.status === 501; // 로그인/키 문제는 재시도해도 소용없음
+          if (lastErr.fatal) break;
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr;
+    };
+
+    const worker = async () => {
+      while (token === warmRun && !aborted && next < total) {
+        const text = texts[next++];
+        try { await one(text); streak = 0; }
+        catch (e) { failed++; streak++; lastMsg = e.message || String(e); if (e.fatal || streak >= 3) aborted = true; }
+        done++;
+        if (token === warmRun) warmUi(`음성 미리 만드는 중… ${done} / ${total}`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]); // 동시에 3개씩
+
+    if (token !== warmRun) return; // 중단되었거나 새 작업으로 교체됨
+    warmRun = 0; warmUi('');
+    if (aborted) toast('음성 미리 만들기를 멈췄어요: ' + lastMsg + ' (재생할 때 다시 시도해요)');
+    else if (failed) toast(`음성 ${created}개를 만들었고 ${failed}개는 실패했어요. 실패한 건 재생할 때 다시 만들어요.`);
+    else toast(created ? `음성 ${created}개를 미리 만들어 두었어요.` : '이미 모두 만들어져 있어요.');
+  }
+
+  function stopWarm() { warmRun++; warmUi(''); }
+
   function prefetch(c) {
     if (settings.engine !== 'cloud' || cloudBroken) return;
     if (c.kind === 'note') {
@@ -941,6 +1000,7 @@
     $('#sRate').value = settings.rate;
     $('#oRate').textContent = settings.rate + '배';
     $('#sGap').value = settings.gap;
+    $('#sWarm').checked = settings.warm;
     $('#sShuffle').checked = settings.shuffle;
     $('#sWeak').checked = settings.weak;
     $('#sExplain').checked = settings.explain;
@@ -972,6 +1032,7 @@
     $('#sShuffle').onchange = (e) => { settings.shuffle = e.target.checked; persist(); stop(); buildQueue(); renderPlayer(null, false); };
     $('#sWeak').onchange = (e) => { settings.weak = e.target.checked; persist(); stop(); buildQueue(); renderPlayer(null, false); };
     $('#sExplain').onchange = (e) => { settings.explain = e.target.checked; persist(); };
+    $('#sWarm').onchange = (e) => { settings.warm = e.target.checked; persist(); };
   }
 
   function bind() {
@@ -996,6 +1057,16 @@
     };
 
     $('#goMake').onclick = () => showView('make');
+    $('#warmStop').onclick = () => { stopWarm(); toast('음성 미리 만들기를 중단했어요. 이미 만든 건 남아 있어요.'); };
+    $('#warmDeck').onclick = () => {
+      if (settings.engine !== 'cloud') return toast('음성 엔진을 "클라우드 음성"으로 바꿔야 미리 만들 수 있어요.');
+      const texts = [...new Set(state.cards.flatMap(speechTexts))];
+      if (!texts.length) return toast('이 폴더에는 만들 음성이 없어요.');
+      const chars = texts.reduce((n, t) => n + t.length, 0);
+      const label = $('#sVoice').selectedOptions[0]?.textContent || settings.voice;
+      if (!confirm(`"${label}" 목소리로 최대 ${chars.toLocaleString('ko-KR')}자를 합성해요.\n이미 만들어 둔 문장은 건너뛰고, 새 문장만 비용이 나가요.\n\n진행할까요?`)) return;
+      warmTexts(texts);
+    };
     document.querySelectorAll('.seg [data-mode]').forEach((b) => { b.onclick = () => setMode(b.dataset.mode); });
     setMode(mode);
     initDictation();

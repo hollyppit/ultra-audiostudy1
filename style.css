@@ -253,6 +253,17 @@ textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--br
 .danger { color: var(--danger); }
 
 /* 관리 */
+/* 음성 미리 만들기 진행 표시 */
+.warm-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 10px 14px;
+  border-radius: 14px; background: var(--brand-soft); color: var(--brand-text); font-size: 14px; font-weight: 700;
+}
+.warm-status span::before {
+  content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%;
+  border: 2px solid var(--brand-text); border-right-color: transparent; animation: spin .8s linear infinite; vertical-align: -1px;
+}
+.warm-row { margin: 0 0 12px; }
+
 /* 목소리 선택 */
 .settings .field-row { display: grid; gap: 8px; }
 .settings .field-row > label { font-size: 14px; font-weight: 700; }
@@ -324,5 +335,5 @@ textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--br
 @media (prefers-reduced-motion: reduce) {
   .player.playing .wave span { animation: none; height: 16px; }
   .track i, .toast, .round, .settings summary::after { transition: none; }
-  .mic.on, .stt-status.busy::before { animation: none; }
+  .mic.on, .stt-status.busy::before, .warm-status span::before { animation: none; }
 }
