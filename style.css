@@ -82,6 +82,23 @@ button { cursor: pointer; }
 
 .account { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
 .account input { width: 160px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+/* 로그인 창 */
+.authdlg { width: min(92vw, 380px); padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.authdlg::backdrop { background: rgba(12, 14, 31, .55); }
+.authdlg form { display: grid; gap: 10px; }
+.authdlg h2 { margin: 0; font-size: 20px; }
+.auth-sub { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
+.authdlg input { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.gbtn { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 14px; border: 1px solid #dadce0; border-radius: 12px; background: #fff; color: #3c4043; font-weight: 700; }
+.gbtn:hover { background: #f7f8f8; }
+.gbtn svg { width: 18px; height: 18px; }
+.auth-or { display: flex; align-items: center; gap: 10px; margin: 4px 0; font-size: 12px; color: var(--muted); }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.auth-msg { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-size: 13px; font-weight: 600; }
+.auth-msg.ok { background: var(--brand-soft); color: var(--brand-text); }
+.auth-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+.auth-actions .ghost { justify-content: center; }
+.auth-foot { display: flex; justify-content: space-between; }
 .chip { padding: 3px 10px; border-radius: 999px; background: var(--brand-soft); color: var(--brand-text); font-weight: 600; font-size: 12px; }
 
 main { max-width: 720px; margin: 0 auto; padding: 8px 20px calc(110px + env(safe-area-inset-bottom)); }

@@ -229,6 +229,7 @@
   /* ---------- 로그인 ---------- */
   async function initAuth() {
     if (!sb) { renderAccount(); return; }
+    bindAuthDialog();
     const { data } = await sb.auth.getSession();
     session = data.session;
     sb.auth.onAuthStateChange((_e, s) => {
@@ -251,16 +252,78 @@
       $('#logout').onclick = () => sb.auth.signOut();
       if (sum.has) $('#migrate').onclick = migrateLocalToCloud;
     } else {
-      el.innerHTML = `<span class="chip">로컬 모드</span>
-        <input id="email" type="email" placeholder="이메일" autocomplete="email" aria-label="이메일">
-        <button class="ghost" id="login">로그인 링크 받기</button>`;
-      $('#login').onclick = async () => {
-        const email = $('#email').value.trim();
-        if (!email) return toast('이메일을 입력해 주세요.');
-        const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin } });
-        toast(error ? '전송 실패: ' + error.message : '메일로 로그인 링크를 보냈어요.');
-      };
+      el.innerHTML = `<span class="chip">로컬 모드</span><button class="ghost" id="openLogin">로그인</button>`;
+      $('#openLogin').onclick = () => { authMsg(''); $('#authDlg').showModal(); $('#authEmail').focus(); };
     }
+  }
+
+  /* 로그인 창: 구글 / 이메일+비밀번호(로그인·회원가입) / 메일 링크(보조) */
+  function authMsg(text, ok) {
+    const p = $('#authMsg');
+    p.textContent = text;
+    p.hidden = !text;
+    p.classList.toggle('ok', !!ok);
+  }
+
+  function authErrText(e) {
+    const m = String(e && e.message || e);
+    if (/invalid login credentials/i.test(m)) return '이메일 또는 비밀번호가 맞지 않아요.';
+    if (/already registered/i.test(m)) return '이미 가입된 이메일이에요. "로그인"을 눌러 주세요.';
+    if (/email not confirmed/i.test(m)) return '이메일 확인이 필요해요. 받은 메일의 링크를 눌러 주세요.';
+    if (/at least \d+ characters/i.test(m)) return '비밀번호는 6자 이상이어야 해요.';
+    if (/rate limit|too many|after \d+ seconds/i.test(m)) return '요청이 너무 많아요. 잠시 후 다시 시도해 주세요.';
+    if (/provider is not enabled|unsupported provider/i.test(m)) return '구글 로그인이 아직 설정되지 않았어요. (Supabase > Authentication > Providers > Google)';
+    if (/invalid email|unable to validate email/i.test(m)) return '이메일 형식을 확인해 주세요.';
+    return m;
+  }
+
+  function bindAuthDialog() {
+    const dlg = $('#authDlg');
+    const btns = ['#authLogin', '#authSignup', '#authGoogle', '#authMagic'].map((s) => $(s));
+    const busy = (on) => btns.forEach((b) => { b.disabled = on; });
+    const creds = () => ({ email: $('#authEmail').value.trim(), password: $('#authPw').value });
+    const run = async (fn) => {
+      busy(true); authMsg('');
+      try { await fn(); } catch (e) { authMsg(authErrText(e)); } finally { busy(false); }
+    };
+
+    $('#authClose').onclick = () => dlg.close();
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // 바깥(어두운 영역) 클릭
+
+    $('#authForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      run(async () => {
+        const { email, password } = creds();
+        if (!email || !password) throw new Error('이메일과 비밀번호를 입력해 주세요.');
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        dlg.close();
+      });
+    });
+
+    $('#authSignup').onclick = () => run(async () => {
+      const { email, password } = creds();
+      if (!email || !password) throw new Error('이메일과 비밀번호를 입력해 주세요.');
+      if (password.length < 6) throw new Error('비밀번호는 6자 이상이어야 해요.');
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin } });
+      if (error) throw error;
+      if (data.user && data.user.identities && data.user.identities.length === 0) throw new Error('이미 가입된 이메일이에요. "로그인"을 눌러 주세요.');
+      if (data.session) { dlg.close(); toast('가입 완료! 로그인됐어요.'); }
+      else authMsg('확인 메일을 보냈어요. 메일의 링크를 누르면 가입이 끝나요.', true); // Supabase 에서 "Confirm email" 이 켜져 있을 때
+    });
+
+    $('#authGoogle').onclick = () => run(async () => {
+      const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin } });
+      if (error) throw error;
+    });
+
+    $('#authMagic').onclick = () => run(async () => {
+      const { email } = creds();
+      if (!email) throw new Error('이메일을 입력해 주세요.');
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin } });
+      if (error) throw error;
+      authMsg('메일로 로그인 링크를 보냈어요.', true);
+    });
   }
 
   /* ---------- 덱 / 카드 로딩 ---------- */
