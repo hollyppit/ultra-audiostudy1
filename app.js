@@ -12,10 +12,17 @@
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
 
   const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, playing: false };
+  // 설정 버전 2: 기본을 클라우드 음성 + OpenAI 코랄로 변경. 옛 버전에 저장된 engine/voice 만 새 기본값으로 바꾸고 나머지 설정은 유지합니다.
+  const SETTINGS_VER = 2;
+  const DEFAULT_VOICE = 'oa_coral';
+  const savedSettings = safeJSON(localStorage.getItem('uas.settings'), {});
+  if (savedSettings.ver !== SETTINGS_VER) { delete savedSettings.engine; delete savedSettings.voice; }
   const settings = Object.assign(
-    { engine: 'browser', voice: 'f1', rate: 1, gap: 4, shuffle: true, weak: true, explain: true },
-    safeJSON(localStorage.getItem('uas.settings'), {})
+    { engine: 'cloud', voice: DEFAULT_VOICE, rate: 1, gap: 4, shuffle: true, weak: true, explain: true },
+    savedSettings,
+    { ver: SETTINGS_VER }
   );
+  try { localStorage.setItem('uas.settings', JSON.stringify(settings)); } catch { /* 저장 불가 환경 */ }
 
   function safeJSON(s, fallback) { try { return JSON.parse(s) ?? fallback; } catch { return fallback; } }
 
@@ -929,7 +936,7 @@
 
   function bindSettings() {
     $('#sEngine').value = settings.engine;
-    if (![...$('#sVoice').options].some((o) => o.value === settings.voice)) settings.voice = 'f1';
+    if (![...$('#sVoice').options].some((o) => o.value === settings.voice)) settings.voice = DEFAULT_VOICE;
     $('#sVoice').value = settings.voice;
     $('#sRate').value = settings.rate;
     $('#oRate').textContent = settings.rate + '배';
