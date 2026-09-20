@@ -3,42 +3,66 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#2B35E8">
+  <meta name="theme-color" content="#3a45f0">
   <title>울트라 오디오 스터디</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <h1>울트라 오디오 스터디</h1>
+    <div class="brand">
+      <span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <h1>울트라 오디오 스터디</h1>
+    </div>
     <div id="account" class="account"></div>
   </header>
 
   <main>
     <div class="deckbar">
       <label class="sr" for="deckSelect">덱 선택</label>
-      <select id="deckSelect"></select>
-      <button id="newDeck" class="ghost">새 덱</button>
+      <div class="select-wrap">
+        <select id="deckSelect"></select>
+      </div>
+      <button id="newDeck" class="ghost" aria-label="새 덱 만들기">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>새 덱</span>
+      </button>
     </div>
 
-    <nav class="tabs" role="tablist">
-      <button role="tab" data-view="listen" aria-selected="true">듣기</button>
-      <button role="tab" data-view="make" aria-selected="false">카드 만들기</button>
-      <button role="tab" data-view="manage" aria-selected="false">카드 관리</button>
+    <nav class="tabs" role="tablist" aria-label="화면 전환">
+      <button role="tab" data-view="listen" aria-selected="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>
+        <span>듣기</span>
+      </button>
+      <button role="tab" data-view="make" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>카드 만들기</span>
+      </button>
+      <button role="tab" data-view="manage" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/></svg>
+        <span>카드 관리</span>
+      </button>
     </nav>
 
     <!-- 듣기 -->
     <section id="view-listen">
-      <div class="player" id="player">
+      <div class="player" id="player" data-step="idle">
         <div class="meta">
           <span id="phase" class="phase">대기 중</span>
           <span id="counter" class="counter"></span>
         </div>
         <div class="track"><i id="progress"></i></div>
+        <ol class="steps" aria-hidden="true">
+          <li data-s="q">문제</li>
+          <li data-s="t">생각</li>
+          <li data-s="a">정답</li>
+          <li data-s="e">해설</li>
+        </ol>
 
         <div class="stage">
           <p id="qText" class="q">카드를 만들면 여기에서 문제가 나와요.</p>
           <p id="aText" class="a" hidden></p>
+          <button id="goMake" class="cta" hidden>첫 카드 만들기</button>
         </div>
 
         <div class="wave" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
@@ -54,13 +78,22 @@
         </div>
 
         <div class="marks">
-          <button id="markWrong" class="mark wrong">헷갈려요</button>
-          <button id="markKnown" class="mark known">알아요</button>
+          <button id="markWrong" class="mark wrong">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>
+            <span>헷갈려요<small>더 자주 나와요</small></span>
+          </button>
+          <button id="markKnown" class="mark known">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12.5 3 3 5-6"/><circle cx="12" cy="12" r="9"/></svg>
+            <span>알아요<small>덜 나와요</small></span>
+          </button>
         </div>
       </div>
 
       <details class="settings">
-        <summary>재생 설정</summary>
+        <summary>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+          재생 설정
+        </summary>
         <div class="grid">
           <label>음성 엔진
             <select id="sEngine">
@@ -74,16 +107,18 @@
           <label>생각하는 시간(초)
             <input id="sGap" type="number" min="1" max="20" step="1">
           </label>
-          <label class="check"><input id="sShuffle" type="checkbox"> 섞어서 재생</label>
-          <label class="check"><input id="sWeak" type="checkbox"> 헷갈린 카드를 더 자주</label>
-          <label class="check"><input id="sExplain" type="checkbox"> 해설도 읽기</label>
+          <label class="check"><input id="sShuffle" type="checkbox"><span>섞어서 재생</span></label>
+          <label class="check"><input id="sWeak" type="checkbox"><span>헷갈린 카드를 더 자주</span></label>
+          <label class="check"><input id="sExplain" type="checkbox"><span>해설도 읽기</span></label>
         </div>
       </details>
     </section>
 
     <!-- 카드 만들기 -->
     <section id="view-make" hidden>
-      <label class="field">메모 붙여넣기
+      <h2 class="sec-title">메모를 카드로 바꿔요</h2>
+      <p class="sec-sub">공부한 내용을 붙여넣으면 문제·정답·해설 카드가 만들어져요.</p>
+      <label class="field"><span class="sr">메모 붙여넣기</span>
         <textarea id="memo" rows="9" placeholder="공부한 내용을 그대로 붙여넣으세요.&#10;&#10;AI를 못 쓰는 환경에서는 한 줄에 하나씩&#10;질문 :: 정답 :: 해설(선택)&#10;형식으로 적어도 카드가 됩니다."></textarea>
       </label>
       <div class="row">

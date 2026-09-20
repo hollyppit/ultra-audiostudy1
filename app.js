@@ -335,10 +335,15 @@
   }
 
   /* ---------- 재생 루프 ---------- */
-  function setPhase(t) { $('#phase').textContent = t; }
+  function setPhase(t) {
+    $('#phase').textContent = t;
+    const step = t === '문제' ? 'q' : t.startsWith('생각') ? 't' : t === '정답' ? 'a' : t === '해설' ? 'e' : 'idle';
+    $('#player').dataset.step = step;
+  }
 
   function renderPlayer(card, showAnswer) {
     const total = state.queue.length;
+    $('#goMake').hidden = total > 0;
     $('#counter').textContent = total ? `${Math.min(state.idx + 1, total)} / ${total}` : '';
     $('#progress').style.width = total ? ((state.idx + (state.playing ? 0.5 : 0)) / total) * 100 + '%' : '0';
     const q = $('#qText'), a = $('#aText');
@@ -489,6 +494,7 @@
       try { await db.delDeck(state.deckId); await loadDecks(); } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
     };
 
+    $('#goMake').onclick = () => showView('make');
     $('#generate').onclick = generate;
     $('#draft').addEventListener('input', (e) => {
       const t = e.target;
