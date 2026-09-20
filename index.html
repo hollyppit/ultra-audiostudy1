@@ -224,6 +224,7 @@
       </div>
       <div class="row warm-row">
         <button id="warmDeck" type="button" class="ghost">이 폴더 음성 미리 만들기</button>
+        <button id="selToggle" type="button" class="ghost">카드 옮기기</button>
         <span class="hint">지금 선택한 목소리로 만들어 둬요. 이미 만든 문장은 건너뛰어요.</span>
       </div>
       <p id="manageHint" class="hint drag-hint" hidden>왼쪽 손잡이를 끌어서 순서를 바꿀 수 있어요. 재생 순서를 "저장된 순서대로"로 하면 이 순서대로 들려요.</p>
@@ -231,6 +232,16 @@
       <button id="delDeck" class="link danger">이 폴더 삭제</button>
     </section>
   </main>
+
+  <!-- 카드 옮기기: 선택한 카드를 다른 폴더로 -->
+  <div id="selBar" class="selbar" role="region" aria-label="카드 옮기기" hidden>
+    <div class="selrow"><b id="selCount">0개 선택</b><button id="selAll" type="button" class="link">전체 선택</button></div>
+    <div class="selrow">
+      <select id="moveTarget" aria-label="옮길 폴더"></select>
+      <button id="selMove" type="button" class="primary">이동</button>
+      <button id="selCancel" type="button" class="ghost">취소</button>
+    </div>
+  </div>
 
   <audio id="audio" preload="auto" playsinline></audio>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

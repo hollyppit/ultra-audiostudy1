@@ -122,6 +122,27 @@
       ids.forEach((id, i) => { const c = d.cards.find((x) => x.id === id); if (c) c.position = i; });
       local.write(d);
     },
+    // 카드를 다른 폴더로 옮김: 대상 폴더의 맨 뒤에 (넘긴 순서 그대로) 붙입니다.
+    async moveCards(ids, deckId) {
+      if (this.cloud()) {
+        const last = await sb.from('cards').select('position').eq('deck_id', deckId).order('position', { ascending: false, nullsFirst: false }).limit(1);
+        const start = !last.error && last.data && last.data[0] && last.data[0].position != null ? last.data[0].position + 1 : 0;
+        let results = await Promise.all(ids.map((id, i) => sb.from('cards').update({ deck_id: deckId, position: start + i }).eq('id', id)));
+        if (results.some((r) => r.error)) { // position 컬럼이 없는 DB면 폴더만 바꿈
+          results = await Promise.all(ids.map((id) => sb.from('cards').update({ deck_id: deckId }).eq('id', id)));
+        }
+        const bad = results.find((r) => r.error);
+        if (bad) throw bad.error;
+        return;
+      }
+      const d = local.read();
+      let next = d.cards.filter((c) => c.deck_id === deckId).reduce((m, c) => Math.max(m, c.position ?? -1), -1) + 1;
+      ids.forEach((id) => {
+        const c = d.cards.find((x) => x.id === id);
+        if (c) { c.deck_id = deckId; c.position = next++; }
+      });
+      local.write(d);
+    },
     async patchCard(id, patch) {
       if (this.cloud()) {
         const { error } = await sb.from('cards').update(patch).eq('id', id);
@@ -187,6 +208,7 @@
       state.decks = decks;
       const saved = localStorage.getItem('uas.deck');
       state.deckId = decks.find((d) => d.id === saved)?.id || decks[0].id;
+      selMode = false; selected.clear();
       renderDecks();
       await loadCards();
     } catch (e) {
@@ -704,13 +726,74 @@
   /* ---------- 카드 관리 ---------- */
   let editId = null;
 
+  /* 폴더 사이 옮기기: "선택 모드"에서 여러 장을 골라 한 번에 옮깁니다. (카드의 "이동" 버튼은 그 카드를 골라 둔 채 선택 모드를 엽니다) */
+  let selMode = false;
+  const selected = new Set();
+
+  function updateSelBar() {
+    $('#selBar').hidden = !selMode;
+    document.body.classList.toggle('selecting', selMode);
+    $('#selToggle').textContent = selMode ? '옮기기 끝내기' : '카드 옮기기';
+    if (!selMode) return;
+    $('#selCount').textContent = `${selected.size}개 선택`;
+    $('#selAll').textContent = selected.size && selected.size === state.cards.length ? '전체 해제' : '전체 선택';
+    const others = state.decks.filter((d) => d.id !== state.deckId);
+    const sel = $('#moveTarget');
+    const prev = sel.value;
+    sel.innerHTML = others.length
+      ? others.map((d) => `<option value="${esc(d.id)}">${esc(d.title)}</option>`).join('')
+      : '<option value="">옮길 폴더가 없어요 (새 폴더를 먼저 만들어 주세요)</option>';
+    if (others.some((d) => d.id === prev)) sel.value = prev;
+    $('#selMove').disabled = !others.length || !selected.size;
+  }
+
+  function enterSel(firstId) {
+    if (editId) cancelEdit(); // 편집 중이던 것은 정리하고 선택 모드로
+    selMode = true; selected.clear();
+    if (firstId) selected.add(firstId);
+    renderManage();
+  }
+
+  function exitSel() { selMode = false; selected.clear(); renderManage(); }
+
+  function toggleSel(id) {
+    if (selected.has(id)) selected.delete(id); else selected.add(id);
+    const item = [...$('#cardList').querySelectorAll('.item')].find((it) => it.dataset.id === id);
+    if (item) { item.classList.toggle('selected', selected.has(id)); item.setAttribute('aria-checked', String(selected.has(id))); }
+    updateSelBar();
+  }
+
+  async function moveSelected() {
+    const target = $('#moveTarget').value;
+    if (!target || !selected.size) return;
+    const deck = state.decks.find((d) => d.id === target);
+    const ids = state.cards.filter((c) => selected.has(c.id)).map((c) => c.id); // 지금 보이는 순서 그대로 옮김
+    if (state.playing) stop();
+    const btn = $('#selMove');
+    btn.disabled = true; btn.textContent = '옮기는 중…';
+    try {
+      await db.moveCards(ids, target);
+      selMode = false; selected.clear();
+      await loadCards();
+      toast(`${ids.length}개를 "${deck ? deck.title : '선택한'}" 폴더로 옮겼어요.`);
+    } catch (e) {
+      toast('옮기기 실패: ' + (e.message || e));
+    } finally {
+      btn.textContent = '이동'; updateSelBar();
+    }
+  }
+
   function renderManage() {
     const deck = state.decks.find((d) => d.id === state.deckId);
     $('#folderName').textContent = deck ? deck.title : '';
     const nNotes = state.cards.filter((c) => c.kind === 'note').length;
     const nQa = state.cards.length - nNotes;
     $('#folderMeta').textContent = [nNotes && `오디오북 ${nNotes}개`, nQa && `문제 카드 ${nQa}장`].filter(Boolean).join(' · ') || '비어 있어요';
-    $('#manageHint').hidden = state.cards.length < 2;
+    $('#manageHint').hidden = state.cards.length < 2 || selMode;
+    $('#selToggle').hidden = !state.cards.length;
+    for (const id of [...selected]) if (!state.cards.some((c) => c.id === id)) selected.delete(id); // 사라진 카드는 선택에서 제외
+    if (!state.cards.length) selMode = false;
+    updateSelBar();
 
     const el = $('#cardList');
     if (!state.cards.length) {
@@ -734,20 +817,23 @@
             </div>
           </div>
         </article>`
-      : `<article class="item" data-id="${esc(c.id)}">
-          <button class="grip" tabindex="0" aria-label="순서 이동: 끌거나 위아래 화살표 키" title="끌어서 순서 바꾸기">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
-          </button>
+      : `<article class="item${selMode ? ' selectable' + (selected.has(c.id) ? ' selected' : '') : ''}" data-id="${esc(c.id)}"${selMode ? ` role="checkbox" aria-checked="${selected.has(c.id)}" tabindex="0"` : ''}>
+          ${selMode
+            ? '<span class="pick" aria-hidden="true"></span>'
+            : `<button class="grip" tabindex="0" aria-label="순서 이동: 끌거나 위아래 화살표 키" title="끌어서 순서 바꾸기">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+              </button>`}
           <div class="body">
             ${c.kind === 'note'
               ? `${c.question ? `<b>${esc(c.question)}</b>` : ''}<span class="txt">${esc(c.answer)}</span>`
               : `<b>${esc(c.question)}</b><span class="ans">${esc(c.answer)}</span>${c.explanation ? `<span class="exp">${esc(c.explanation)}</span>` : ''}`}
             <div class="foot">
               <span class="tags">${c.kind === 'note' ? '<span class="tag">오디오북</span>' : c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}${voiceExists(c.voice) ? `<span class="tag voice-tag">${esc(voiceLabel(c.voice))}</span>` : ''}${c.media && c.media.length ? `<span class="tag">첨부 ${c.media.length}</span>` : ''}</span>
-              <span class="acts">
+              ${selMode ? '' : `<span class="acts">
                 <button class="link" data-act="edit">편집</button>
+                <button class="link" data-act="move">이동</button>
                 <button class="link danger" data-act="del">삭제</button>
-              </span>
+              </span>`}
             </div>
           </div>
         </article>`).join('');
@@ -1208,6 +1294,7 @@
   /* ---------- 화면 전환 / 이벤트 ---------- */
   function showView(v) {
     if (v !== 'make') stopDictation();
+    if (v !== 'manage' && selMode) { selMode = false; selected.clear(); renderManage(); } // 다른 탭으로 가면 선택 모드 종료
     document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === v)));
     ['listen', 'make', 'manage'].forEach((n) => { $('#view-' + n).hidden = n !== v; });
   }
@@ -1245,7 +1332,8 @@
     document.querySelectorAll('.tabs button').forEach((b) => { b.onclick = () => showView(b.dataset.view); });
 
     $('#deckSelect').onchange = async (e) => {
-      stop(); state.deckId = e.target.value; localStorage.setItem('uas.deck', state.deckId);
+      stop(); selMode = false; selected.clear(); // 폴더를 바꾸면 선택 모드는 끝냄
+      state.deckId = e.target.value; localStorage.setItem('uas.deck', state.deckId);
       try { await loadCards(); } catch (err) { toast('불러오기 실패: ' + err.message); }
     };
     $('#newDeck').onclick = async () => {
@@ -1254,6 +1342,7 @@
       try {
         const deck = await db.addDeck(title);
         state.decks.push(deck); state.deckId = deck.id; localStorage.setItem('uas.deck', deck.id);
+        selMode = false; selected.clear();
         stop(); renderDecks(); await loadCards(); showView('make');
       } catch (e) { toast('덱 만들기 실패: ' + (e.message || e)); }
     };
@@ -1313,7 +1402,21 @@
       t.value = '';
       if (file) attachToEdit(file);
     });
+    $('#cardList').addEventListener('keydown', (e) => {
+      if (!selMode || (e.key !== ' ' && e.key !== 'Enter')) return;
+      const it = e.target.closest('.item.selectable');
+      if (it) { e.preventDefault(); toggleSel(it.dataset.id); }
+    });
+    $('#selToggle').onclick = () => (selMode ? exitSel() : enterSel());
+    $('#selCancel').onclick = exitSel;
+    $('#selAll').onclick = () => {
+      if (selected.size && selected.size === state.cards.length) selected.clear();
+      else state.cards.forEach((c) => selected.add(c.id));
+      renderManage();
+    };
+    $('#selMove').onclick = moveSelected;
     $('#cardList').addEventListener('click', (e) => {
+      if (selMode) { const it = e.target.closest('.item.selectable'); if (it) toggleSel(it.dataset.id); return; } // 선택 모드: 카드를 누르면 선택/해제
       if (e.target.dataset.rm !== undefined && e.target.closest('#editAttach')) return removeEditAttach(Number(e.target.dataset.rm));
       const btn = e.target.closest('[data-act]');
       const item = e.target.closest('.item');
@@ -1326,6 +1429,7 @@
         renderManage(); $('#cardList').querySelector('.editing textarea')?.focus();
       }
       else if (btn.dataset.act === 'cancel') cancelEdit();
+      else if (btn.dataset.act === 'move') enterSel(id);
       else if (btn.dataset.act === 'save') saveEdit(id, item);
       else if (btn.dataset.act === 'del') deleteCard(id);
     });

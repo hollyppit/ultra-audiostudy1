@@ -260,6 +260,25 @@ textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--br
 .danger { color: var(--danger); }
 
 /* 관리 */
+/* 카드 옮기기 (선택 모드) */
+.item.selectable { cursor: pointer; padding-left: 12px; }
+.item .pick { flex: none; position: relative; width: 24px; height: 24px; margin: 2px 8px 0 0; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); }
+.item.selected { border-color: var(--brand); background: var(--brand-soft); }
+.item.selected .pick { background: var(--brand); border-color: var(--brand); }
+.item.selected .pick::after { content: ""; position: absolute; left: 6px; top: 1px; width: 6px; height: 12px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.selbar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 12;
+  width: min(92vw, 680px); display: grid; gap: 10px; padding: 12px 14px; border-radius: 18px;
+  background: var(--surface); border: 1px solid var(--brand); box-shadow: 0 14px 40px rgba(18, 20, 46, .3);
+}
+.selbar .selrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.selbar select { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.selbar .primary { padding: 10px 18px; box-shadow: none; }
+.selbar .primary:disabled { opacity: .45; cursor: not-allowed; }
+.selbar .ghost { padding: 9px 14px; box-shadow: none; }
+body.selecting main { padding-bottom: 210px; }
+@media (min-width: 640px) { .selbar { bottom: 20px; } }
+
 /* 이미지·영상 첨부 */
 .media-box { display: grid; gap: 10px; width: 100%; }
 .media-box img, .media-box video { width: 100%; max-height: 36vh; object-fit: contain; border-radius: 14px; background: rgba(0,0,0,.25); }
