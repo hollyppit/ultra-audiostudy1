@@ -344,6 +344,7 @@
   function renderPlayer(card, showAnswer) {
     const total = state.queue.length;
     $('#goMake').hidden = total > 0;
+    $('#intro').hidden = total > 0;
     $('#counter').textContent = total ? `${Math.min(state.idx + 1, total)} / ${total}` : '';
     $('#progress').style.width = total ? ((state.idx + (state.playing ? 0.5 : 0)) / total) * 100 + '%' : '0';
     const q = $('#qText'), a = $('#aText');

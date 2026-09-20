@@ -12,7 +12,10 @@
   <header class="top">
     <div class="brand">
       <span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-      <h1>울트라 오디오 스터디</h1>
+      <div>
+        <h1>울트라 오디오 스터디</h1>
+        <p class="tagline">내가 쓴 메모가 자동으로 오디오 공부가 돼요</p>
+      </div>
     </div>
     <div id="account" class="account"></div>
   </header>
@@ -46,6 +49,16 @@
 
     <!-- 듣기 -->
     <section id="view-listen">
+      <div id="intro" class="intro" hidden>
+        <h2>내가 쓴 메모로, 귀로 하는 공부</h2>
+        <p>공부한 메모를 붙여넣기만 하면 문제·정답·해설을 읽어주는 오디오 스터디가 만들어져요. 이동 중에도, 눈을 감고도 복습하세요.</p>
+        <ol>
+          <li><b>1</b><span>메모 붙여넣기<small>노트, 요약본 아무거나</small></span></li>
+          <li><b>2</b><span>카드 자동 생성<small>AI가 문제와 정답으로 정리</small></span></li>
+          <li><b>3</b><span>재생 버튼 누르고 듣기<small>문제 → 생각 → 정답 순서로</small></span></li>
+        </ol>
+      </div>
+
       <div class="player" id="player" data-step="idle">
         <div class="meta">
           <span id="phase" class="phase">대기 중</span>
@@ -62,7 +75,7 @@
         <div class="stage">
           <p id="qText" class="q">카드를 만들면 여기에서 문제가 나와요.</p>
           <p id="aText" class="a" hidden></p>
-          <button id="goMake" class="cta" hidden>첫 카드 만들기</button>
+          <button id="goMake" class="cta" hidden>내 메모로 첫 카드 만들기</button>
         </div>
 
         <div class="wave" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
