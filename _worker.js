@@ -121,6 +121,14 @@ const VOICES = {
   oa_onyx: { openai: 'onyx' },
   oa_echo: { openai: 'echo' },
   oa_kid: { openai: 'nova', kid: true },
+  // Gemini TTS: 30개 목소리 중 한국어에 어울리는 것들. 말투는 문장으로 지시합니다. (GEMINI_API_KEY 필요)
+  gm_kore: { gemini: 'Kore' },         // 여성, 단호하고 또렷한
+  gm_sulafat: { gemini: 'Sulafat' },   // 여성, 따뜻한
+  gm_aoede: { gemini: 'Aoede' },       // 여성, 경쾌한
+  gm_charon: { gemini: 'Charon' },     // 남성, 정보 전달에 좋은
+  gm_puck: { gemini: 'Puck' },         // 남성, 활기찬
+  gm_achird: { gemini: 'Achird' },     // 남성, 친근한
+  gm_kid: { gemini: 'Leda', kid: true },   // 젊은 목소리 + 아이 같은 톤 지시
 };
 
 const OPENAI_STYLE = '한국어 학습용 오디오북입니다. 또박또박 자연스러운 한국어 발음과 억양으로, 차분하고 따뜻한 톤으로 읽어 주세요. 숫자와 단위는 정확하게 읽어 주세요.';
@@ -147,6 +155,78 @@ async function openaiTts({ voice, kid, text, env }) {
   return new Response(res.body, { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'private, max-age=86400' } });
 }
 
+// ---- Gemini TTS ----
+// 24kHz 16-bit 모노 PCM(base64)으로 돌아오므로, 브라우저가 재생할 수 있게 WAV 헤더를 붙여 돌려줍니다.
+function pcmToWav(pcm, rate = 24000) {
+  const wav = new Uint8Array(44 + pcm.length);
+  const v = new DataView(wav.buffer);
+  const tag = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  tag(0, 'RIFF'); v.setUint32(4, 36 + pcm.length, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  tag(36, 'data'); v.setUint32(40, pcm.length, true);
+  wav.set(pcm, 44);
+  return wav;
+}
+
+// 응답 JSON 어디에 있든 base64 오디오(data 필드)를 찾아 돌려줍니다. (API 응답 모양 변경에 대비)
+function findAudio(o) {
+  if (!o || typeof o !== 'object') return null;
+  for (const [k, v] of Object.entries(o)) {
+    if (k === 'data' && typeof v === 'string' && v.length > 100) return { data: v, mime: o.mimeType || o.mime_type || '' };
+    const r = findAudio(v);
+    if (r) return r;
+  }
+  return null;
+}
+
+const GEMINI_STYLE = 'Read the following Korean text clearly and naturally, in a calm and warm tone, pronouncing numbers and units accurately:';
+const GEMINI_KID_STYLE = 'Read the following Korean text like a cheerful young child, with a bright, high-pitched voice, clearly:';
+
+async function geminiTts({ voice, kid, text, env }) {
+  if (!env.GEMINI_API_KEY) return json({ error: '서버에 GEMINI_API_KEY가 설정되지 않았어요.' }, 501);
+  const model = env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
+  const prompt = (kid ? GEMINI_KID_STYLE : GEMINI_STYLE) + '\n\n' + text;
+  const headers = { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY };
+
+  // 1) generateContent 방식
+  let res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+      },
+    }),
+  });
+  // 2) 이 모델이 generateContent 를 지원하지 않으면 interactions 방식으로 재시도
+  if (res.status === 400 || res.status === 404) {
+    const retry = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        input: prompt,
+        response_format: { type: 'audio' },
+        generation_config: { speech_config: [{ voice }] },
+      }),
+    });
+    if (retry.ok) res = retry;
+  }
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    return json({ error: 'Gemini TTS 호출 실패 (' + res.status + ') ' + detail.slice(0, 200) }, 502);
+  }
+
+  const audio = findAudio(await res.json().catch(() => null));
+  if (!audio) return json({ error: 'Gemini가 음성을 돌려주지 않았어요. 다시 시도해 주세요.' }, 502);
+  const pcm = Uint8Array.from(atob(audio.data), (c) => c.charCodeAt(0));
+  const rate = Number((/rate=(\d+)/.exec(audio.mime) || [])[1]) || 24000;
+  return new Response(pcmToWav(pcm, rate), { headers: { 'content-type': 'audio/wav', 'cache-control': 'private, max-age=86400' } });
+}
+
 async function handleTts({ request, env }) {
   const auth = await requireUser(request, env);
   if (!auth.ok) return json({ error: auth.reason }, 401);
@@ -158,6 +238,7 @@ async function handleTts({ request, env }) {
   if (text.length > 1000) return json({ error: '한 번에 1,000자까지만 읽을 수 있어요.' }, 400);
 
   if (voice.openai) return openaiTts({ voice: voice.openai, kid: voice.kid, text, env });
+  if (voice.gemini) return geminiTts({ voice: voice.gemini, kid: voice.kid, text, env });
   if (!env.TTS_API_KEY) return json({ error: '서버에 TTS_API_KEY가 설정되지 않았어요.' }, 501);
 
   const res = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(env.TTS_API_KEY), {
