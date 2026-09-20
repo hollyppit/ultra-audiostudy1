@@ -166,6 +166,66 @@
     },
   };
 
+  /* ---------- 이 기기(localStorage) 데이터 → 내 계정(클라우드)으로 옮기기 ----------
+     로그인 전에 만든 폴더·카드를 Supabase 로 올립니다. 같은 id 로 upsert 하므로 다시 눌러도 중복되지 않고,
+     성공하면 원본은 지우지 않고 백업 키(uas.data.backup)로 옮겨 둡니다. */
+  const LS_BACKUP = 'uas.data.backup';
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function localSummary() {
+    const d = local.read();
+    return { decks: d.decks.length, cards: d.cards.length, has: d.cards.length > 0 || d.decks.length > 1 };
+  }
+
+  async function migrateLocalToCloud() {
+    if (!db.cloud()) return toast('먼저 로그인해 주세요.');
+    const raw = localStorage.getItem(LS);
+    const d = local.read();
+    const sum = localSummary();
+    if (!sum.has) return toast('옮길 데이터가 없어요.');
+    if (!confirm(`이 기기의 폴더 ${sum.decks}개, 카드 ${sum.cards}개를 내 계정으로 옮길까요?\n(이 기기의 원본은 백업으로 남겨 둡니다.)`)) return;
+
+    const deckIds = new Map();
+    const deckRows = d.decks.map((x) => {
+      const id = UUID_RE.test(x.id) ? x.id : uid();
+      deckIds.set(x.id, id);
+      return { id, title: String(x.title || '폴더').trim().slice(0, 100) || '폴더', created_at: x.created_at || new Date().toISOString() };
+    });
+    const cardRows = d.cards.filter((c) => deckIds.has(c.deck_id) && c.question != null && c.answer != null).map((c) => ({
+      id: UUID_RE.test(c.id) ? c.id : uid(),
+      deck_id: deckIds.get(c.deck_id),
+      question: String(c.question),
+      answer: String(c.answer),
+      explanation: c.explanation || '',
+      wrong_count: Math.max(0, c.wrong_count | 0),
+      position: c.position ?? null,
+      kind: c.kind === 'note' ? 'note' : 'qa',
+      voice: c.voice || null,
+      media: Array.isArray(c.media) ? c.media : [],
+      created_at: c.created_at || new Date().toISOString(),
+    }));
+
+    const btn = $('#migrate');
+    if (btn) { btn.disabled = true; btn.textContent = '옮기는 중…'; }
+    try {
+      const put = async (table, rows) => {
+        for (let i = 0; i < rows.length; i += 200) {
+          const { error } = await sb.from(table).upsert(rows.slice(i, i + 200), { onConflict: 'id' });
+          if (error) throw error;
+        }
+      };
+      await put('decks', deckRows);
+      await put('cards', cardRows);
+      try { localStorage.setItem(LS_BACKUP, raw); localStorage.removeItem(LS); } catch { /* 저장 불가 환경 */ }
+      toast(`폴더 ${deckRows.length}개, 카드 ${cardRows.length}개를 옮겼어요.`);
+      await loadDecks();
+    } catch (e) {
+      toast('옮기기 실패: ' + (e.message || e) + ' (원본은 그대로 있어요. supabase-schema.sql 실행 여부를 확인해 주세요.)');
+    } finally {
+      renderAccount();
+    }
+  }
+
   /* ---------- 로그인 ---------- */
   async function initAuth() {
     if (!sb) { renderAccount(); return; }
@@ -184,8 +244,12 @@
     const el = $('#account');
     if (!sb) { el.innerHTML = '<span class="chip">로컬 모드</span>'; return; }
     if (session) {
-      el.innerHTML = `<span>${esc(session.user.email)}</span><button class="link" id="logout">로그아웃</button>`;
+      const sum = localSummary();
+      el.innerHTML = `<span>${esc(session.user.email)}</span>`
+        + (sum.has ? `<button class="ghost" id="migrate" title="로그인 전에 이 기기에 만든 폴더·카드를 내 계정으로 옮겨요">이 기기 데이터 옮기기 (${sum.cards})</button>` : '')
+        + `<button class="link" id="logout">로그아웃</button>`;
       $('#logout').onclick = () => sb.auth.signOut();
+      if (sum.has) $('#migrate').onclick = migrateLocalToCloud;
     } else {
       el.innerHTML = `<span class="chip">로컬 모드</span>
         <input id="email" type="email" placeholder="이메일" autocomplete="email" aria-label="이메일">
