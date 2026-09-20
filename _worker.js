@@ -1,11 +1,13 @@
 // Cloudflare Pages 고급 모드 (_worker.js): /api/* 는 여기서 처리하고 나머지는 정적 파일로 넘깁니다.
 
 // 유료 API(Claude, TTS)를 아무나 호출하지 못하게 Supabase 로그인 토큰을 확인합니다.
-// - SUPABASE_URL / SUPABASE_ANON_KEY 가 설정돼 있으면: 로그인한 사용자만 통과
-// - 없으면: ALLOW_ANON=1 일 때만 통과 (로컬 개발용). 배포 환경에서는 설정하지 마세요.
+// - ALLOW_ANON=1 이면: 로그인 없이 모두 통과 (테스트용). ※ 주소를 아는 누구나 유료 API를 쓸 수 있으니 정식 오픈 전에 반드시 지우세요.
+// - 그 외에 SUPABASE_URL / SUPABASE_ANON_KEY 가 설정돼 있으면: 로그인한 사용자만 통과
+// - 둘 다 없으면: 거부
 async function requireUser(request, env) {
+  if (env.ALLOW_ANON === '1') return { ok: true };
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
-    return env.ALLOW_ANON === '1' ? { ok: true } : { ok: false, reason: '서버에 SUPABASE_URL / SUPABASE_ANON_KEY가 설정되지 않았어요.' };
+    return { ok: false, reason: '서버에 SUPABASE_URL / SUPABASE_ANON_KEY가 설정되지 않았어요.' };
   }
   const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (!token) return { ok: false, reason: '로그인이 필요해요. (로그인 없이는 AI 변환·클라우드 음성을 쓸 수 없어요)' };

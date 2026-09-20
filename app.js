@@ -3,7 +3,7 @@
 
   /* ---------- 기본 세팅 ---------- */
   const CFG = window.APP_CONFIG || {};
-  const hasSb = CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY && !/YOUR_/.test(CFG.SUPABASE_URL) && window.supabase;
+  const hasSb = CFG.LOGIN_ENABLED !== false && CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY && !/YOUR_/.test(CFG.SUPABASE_URL) && window.supabase;
   const sb = hasSb ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
   let session = null;
 
