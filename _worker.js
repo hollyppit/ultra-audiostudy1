@@ -230,11 +230,11 @@ async function geminiTts({ voice, kid, text, env }) {
 // ---- 음성 저장(캐시) ----
 // 같은 목소리 + 같은 문장은 한 번만 합성하고 저장해 뒀다가 다시 돌려줍니다. (유료 API 재호출 방지)
 // 저장 위치(위에서부터 우선):
-//  1) Supabase Storage: SUPABASE_URL + SUPABASE_SECRET_KEY 가 있으면 비공개 버킷(tts-cache)에 영구 저장 (버킷은 처음 쓸 때 자동 생성)
-//  2) Cloudflare R2: 버킷을 AUDIO_CACHE 라는 이름으로 연결했으면 영구 저장
+//  1) Cloudflare R2: 버킷을 AUDIO_CACHE 라는 이름으로 연결했으면 영구 저장
+//  2) Supabase Storage: R2가 없고 SUPABASE_URL + SUPABASE_SECRET_KEY 가 있으면 비공개 버킷(tts-cache)에 영구 저장 (버킷은 처음 쓸 때 자동 생성)
 //  3) Cloudflare 엣지 캐시: 위 둘이 없을 때의 임시 저장 (지역별·보관 기간이 보장되지 않는 보조 수단)
 // 저장 여부와 무관하게 로그인/한도 검사는 항상 먼저 거칩니다.
-// ※ SUPABASE_SECRET_KEY 는 서버 전용 비밀 키입니다. 브라우저/config.js 에는 절대 넣지 마세요.
+// ※ SUPABASE_SECRET_KEY 는 서버 전용 비밀 키입니다. 브라우저/config.js 에는 절대 넣지 마세요. (카드 첨부 업로드에도 쓰입니다)
 
 const SB_BUCKET = 'tts-cache';
 const sbKey = (env) => env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_KEY || '';
@@ -280,11 +280,11 @@ const edgeKey = (key) => new Request('https://tts-cache.invalid/' + key);
 
 async function cacheGet(env, key) {
   try {
-    if (sbReady(env)) return await sbGet(env, key);
     if (env.AUDIO_CACHE) {
       const obj = await env.AUDIO_CACHE.get(key);
       return obj ? { body: obj.body, type: (obj.httpMetadata && obj.httpMetadata.contentType) || 'audio/mpeg', where: 'r2' } : null;
     }
+    if (sbReady(env)) return await sbGet(env, key);
     const hit = await caches.default.match(edgeKey(key));
     return hit ? { body: hit.body, type: hit.headers.get('content-type') || 'audio/mpeg', where: 'edge' } : null;
   } catch { return null; } // 저장소 문제로 재생이 막히지 않게 무시
@@ -292,8 +292,8 @@ async function cacheGet(env, key) {
 
 async function cachePut(env, key, buf, type) {
   try {
-    if (sbReady(env)) await sbPut(env, key, buf, type);
-    else if (env.AUDIO_CACHE) await env.AUDIO_CACHE.put(key, buf, { httpMetadata: { contentType: type } });
+    if (env.AUDIO_CACHE) await env.AUDIO_CACHE.put(key, buf, { httpMetadata: { contentType: type } });
+    else if (sbReady(env)) await sbPut(env, key, buf, type);
     else await caches.default.put(edgeKey(key), new Response(buf, { headers: { 'content-type': type, 'cache-control': 'public, max-age=2592000' } }));
   } catch { /* 저장 실패는 무시 */ }
 }
@@ -402,6 +402,73 @@ async function handleStt({ request, env }) {
   return json({ text });
 }
 
+// ---- /api/media/* : 카드 첨부(이미지·영상) → Supabase Storage ----
+// 파일은 브라우저가 Supabase 로 직접 올립니다. (서버는 "이 경로에 올려도 된다"는 1회용 허가만 발급 → 큰 영상도 Cloudflare 를 거치지 않음)
+// 버킷 card-media 는 공개 읽기(주소를 아는 사람만 볼 수 있도록 경로는 무작위 UUID)이고, 업로드는 이 서버가 발급한 허가로만 가능합니다.
+const MEDIA_BUCKET = 'card-media';
+const MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+const MEDIA_TYPES = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif',
+  'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+};
+const MEDIA_PATH = /^\d{4}-\d{2}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{2,4}$/;
+
+async function mediaEnsureBucket(env) {
+  const res = await fetch(`${sbBase(env)}/bucket`, {
+    method: 'POST',
+    headers: sbHeaders(env, { 'content-type': 'application/json' }),
+    body: JSON.stringify({ id: MEDIA_BUCKET, name: MEDIA_BUCKET, public: true, file_size_limit: MEDIA_MAX_BYTES, allowed_mime_types: Object.keys(MEDIA_TYPES) }),
+  });
+  return res.ok || res.status === 409; // 이미 있으면 그대로 사용
+}
+
+async function handleMediaSign({ request, env }) {
+  const auth = await requireUser(request, env);
+  if (!auth.ok) return json({ error: auth.reason }, 401);
+  if (!sbReady(env)) return json({ error: '서버에 SUPABASE_URL / SUPABASE_SECRET_KEY가 설정되지 않았어요. (첨부 기능에 필요해요)' }, 501);
+
+  let type, size;
+  try { ({ type, size } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  const ext = MEDIA_TYPES[type];
+  if (!ext) return json({ error: '지원하지 않는 형식이에요. (사진: JPG·PNG·GIF·WebP·AVIF, 영상: MP4·WebM·MOV)' }, 400);
+  if (!(Number(size) > 0) || Number(size) > MEDIA_MAX_BYTES) return json({ error: `파일이 너무 커요. ${MEDIA_MAX_BYTES / 1048576}MB 이하로 올려 주세요.` }, 400);
+
+  const path = `${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}.${ext}`;
+  const sign = () => fetch(`${sbBase(env)}/object/upload/sign/${MEDIA_BUCKET}/${path}`, { method: 'POST', headers: sbHeaders(env, { 'content-type': 'application/json' }), body: '{}' });
+  let res = await sign();
+  if (res.status === 404 || res.status === 400) { // 버킷이 아직 없으면 만들고 한 번 더
+    if (await mediaEnsureBucket(env)) res = await sign();
+  }
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    return json({ error: '첨부 준비 실패 (' + res.status + ') ' + detail.slice(0, 160) }, 502);
+  }
+  const j = await res.json().catch(() => ({}));
+  const token = new URL(j.url || j.signedUrl || '', 'https://placeholder.invalid').searchParams.get('token');
+  if (!token) return json({ error: '업로드 허가를 받지 못했어요.' }, 502);
+  return json({ path, token });
+}
+
+async function handleMediaDelete({ request, env }) {
+  const auth = await requireUser(request, env);
+  if (!auth.ok) return json({ error: auth.reason }, 401);
+  if (!sbReady(env)) return json({ error: '서버에 SUPABASE_URL / SUPABASE_SECRET_KEY가 설정되지 않았어요.' }, 501);
+
+  let paths;
+  try { ({ paths } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  if (!Array.isArray(paths)) return json({ error: '잘못된 요청이에요.' }, 400);
+  const valid = paths.filter((p) => typeof p === 'string' && MEDIA_PATH.test(p)).slice(0, 50); // 이 서버가 만든 형식의 경로만 삭제
+  if (!valid.length) return json({ ok: true, deleted: 0 });
+
+  const res = await fetch(`${sbBase(env)}/object/${MEDIA_BUCKET}`, {
+    method: 'DELETE',
+    headers: sbHeaders(env, { 'content-type': 'application/json' }),
+    body: JSON.stringify({ prefixes: valid }),
+  });
+  if (!res.ok) return json({ error: '삭제 실패 (' + res.status + ')' }, 502);
+  return json({ ok: true, deleted: valid.length });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
@@ -410,6 +477,8 @@ export default {
       if (pathname === '/api/cards') return handleCards({ request, env });
       if (pathname === '/api/tts') return handleTts({ request, env, ctx });
       if (pathname === '/api/stt') return handleStt({ request, env });
+      if (pathname === '/api/media/sign') return handleMediaSign({ request, env });
+      if (pathname === '/api/media/delete') return handleMediaDelete({ request, env });
       return json({ error: '없는 API예요.' }, 404);
     }
     return env.ASSETS.fetch(request);

@@ -100,8 +100,8 @@
       if (this.cloud()) {
         const rows = arr.map((c, i) => ({ deck_id: deckId, position: start + i, ...c }));
         let { error } = await sb.from('cards').insert(rows);
-        if (error && rows.some((r) => r.kind === 'note' || r.voice)) {
-          throw new Error('오디오북·카드별 목소리를 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요. (' + error.message + ')');
+        if (error && rows.some((r) => r.kind === 'note' || r.voice || (r.media && r.media.length))) {
+          throw new Error('오디오북·카드별 목소리·첨부를 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요. (' + error.message + ')');
         }
         if (error) ({ error } = await sb.from('cards').insert(rows.map(({ position, ...rest }) => rest)));
         if (error) throw error;
@@ -272,6 +272,7 @@
     const text = $('#memo').value.trim();
     if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
     const btn = $('#generate');
+    deleteMedia(state.draft.flatMap((c) => mediaPaths(c.media))); // 이전 초안을 버리고 새로 만들면 그 초안에 올려 둔 첨부도 정리
     const idleLabel = btn.textContent;
     btn.disabled = true; btn.textContent = mode === 'audiobook' ? '정리 중…' : '변환 중…';
     try {
@@ -305,6 +306,120 @@
       btn.disabled = false; btn.textContent = idleLabel;
     }
     renderDraft();
+  }
+
+  /* ---------- 이미지·영상 첨부 (Supabase Storage) ----------
+     카드의 media 배열에 [{ type: 'image'|'video', path, name, size }] 로 저장하고, 파일은 Supabase 버킷(card-media)에 둡니다.
+     업로드: 서버(/api/media/sign)에서 1회용 허가를 받아 브라우저가 Supabase 로 직접 올립니다. */
+  const MEDIA_BUCKET = 'card-media';
+  const MEDIA_MAX_MB = 50;
+  const MEDIA_OK = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime'];
+  let mediaClient = null;
+
+  const mediaUrl = (m) => `${String(CFG.SUPABASE_URL || '').replace(/\/$/, '')}/storage/v1/object/public/${MEDIA_BUCKET}/${m.path}`;
+  const mediaPaths = (list) => (list || []).map((m) => m.path).filter(Boolean);
+
+  function mediaClientGet() {
+    if (sb) return sb;
+    if (!mediaClient && window.supabase && CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY && !/YOUR_/.test(CFG.SUPABASE_URL)) {
+      mediaClient = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    }
+    return mediaClient;
+  }
+
+  async function uploadMedia(file) {
+    if (!MEDIA_OK.includes(file.type)) throw new Error('지원하지 않는 형식이에요. (사진: JPG·PNG·GIF·WebP·AVIF, 영상: MP4·WebM·MOV)');
+    if (file.size > MEDIA_MAX_MB * 1024 * 1024) throw new Error(`파일이 너무 커요. ${MEDIA_MAX_MB}MB 이하로 올려 주세요.`);
+    const client = mediaClientGet();
+    if (!client) throw new Error('Supabase 설정(config.js)이 필요해요.');
+    const res = await fetch('/api/media/sign', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ type: file.type, size: file.size }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
+    const { error } = await client.storage.from(MEDIA_BUCKET).uploadToSignedUrl(j.path, j.token, file, { contentType: file.type });
+    if (error) throw new Error(error.message || '업로드 실패');
+    return { type: file.type.startsWith('video/') ? 'video' : 'image', path: j.path, name: file.name, size: file.size };
+  }
+
+  // 파일 삭제는 실패해도 화면 동작에 영향이 없도록 조용히 처리합니다. (남은 파일은 용량만 차지)
+  async function deleteMedia(paths) {
+    const list = (paths || []).filter(Boolean);
+    if (!list.length) return;
+    try { await fetch('/api/media/delete', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ paths: list }) }); } catch { /* 무시 */ }
+  }
+
+  function mediaHtml(m, thumb) {
+    const u = esc(mediaUrl(m));
+    return m.type === 'video'
+      ? `<video src="${u}#t=0.1" preload="metadata" ${thumb ? 'muted' : 'controls'} playsinline></video>`
+      : `<img src="${u}" alt="${esc(m.name || '')}" loading="lazy">`;
+  }
+
+  // 첨부 영역(썸네일 + 첨부 버튼)의 안쪽 HTML. 만들기 화면과 편집 화면이 함께 씁니다.
+  function attachInner(list, uploading) {
+    return `<div class="thumbs">${(list || []).map((m, j) => `<div class="thumb">${mediaHtml(m, true)}<button type="button" class="rm" data-rm="${j}" aria-label="첨부 삭제">×</button></div>`).join('')}</div>
+      <label class="attach-btn${uploading ? ' busy' : ''}">${uploading ? '업로드 중…' : '＋ 사진·영상 첨부'}<input type="file" accept="${MEDIA_OK.join(',')}" hidden${uploading ? ' disabled' : ''}></label>`;
+  }
+
+  // 만들기 화면의 카드 하나에 첨부 추가/삭제 (화면 전체를 다시 그리지 않고 첨부 영역만 갱신)
+  const draftAttachBox = (i) => $('#draft').querySelector(`.attach[data-i="${i}"]`);
+  function refreshDraftAttach(c) {
+    const i = state.draft.indexOf(c);
+    const box = i >= 0 && draftAttachBox(i);
+    if (box) box.innerHTML = attachInner(c.media, c.uploading);
+  }
+
+  async function attachToDraft(i, file) {
+    const c = state.draft[i];
+    if (!c || !file) return;
+    c.uploading = true; refreshDraftAttach(c);
+    try {
+      const m = await uploadMedia(file);
+      if (state.draft.includes(c)) { (c.media = c.media || []).push(m); toast('첨부했어요.'); }
+      else deleteMedia([m.path]); // 올리는 동안 이 항목이 빠졌다면 파일 정리
+    } catch (e) { toast('첨부 실패: ' + (e.message || e)); }
+    finally { c.uploading = false; refreshDraftAttach(c); }
+  }
+
+  function removeDraftAttach(i, j) {
+    const c = state.draft[i];
+    if (!c || !c.media) return;
+    const [m] = c.media.splice(j, 1);
+    if (m) deleteMedia([m.path]);
+    refreshDraftAttach(c);
+  }
+
+  // 관리 화면 편집 중인 카드의 첨부 상태: list = 현재 목록, added = 이번 편집에서 새로 올린 것 (취소하면 지움)
+  let editMedia = null;
+
+  async function attachToEdit(file) {
+    const em = editMedia;
+    if (!em || !file) return;
+    const box = $('#editAttach');
+    em.uploading = true; if (box) box.innerHTML = attachInner(em.list, true);
+    try {
+      const m = await uploadMedia(file);
+      if (editMedia === em) { em.list.push(m); em.added.push(m); toast('첨부했어요. 저장을 눌러야 카드에 반영돼요.'); }
+      else deleteMedia([m.path]);
+    } catch (e) { toast('첨부 실패: ' + (e.message || e)); }
+    finally { em.uploading = false; const b = $('#editAttach'); if (b && editMedia === em) b.innerHTML = attachInner(em.list, false); }
+  }
+
+  function removeEditAttach(j) {
+    if (!editMedia) return;
+    const [m] = editMedia.list.splice(j, 1);
+    // 이번 편집에서 새로 올린 파일이면 바로 지우고, 원래 있던 첨부는 "저장"할 때 지웁니다. (취소하면 그대로 남도록)
+    if (m && editMedia.added.some((a) => a.path === m.path)) {
+      editMedia.added = editMedia.added.filter((a) => a.path !== m.path);
+      deleteMedia([m.path]);
+    }
+    const b = $('#editAttach');
+    if (b) b.innerHTML = attachInner(editMedia.list, false);
+  }
+
+  function cancelEdit() {
+    if (editMedia) deleteMedia(mediaPaths(editMedia.added)); // 취소하면 이번에 올린 파일은 지움
+    editMedia = null; editId = null;
+    renderManage();
   }
 
   /* 목소리 규칙
@@ -354,12 +469,14 @@
         ? `<article class="draft-card">
             <label>제목 <span class="opt">(선택)</span><textarea data-i="${i}" data-k="question" rows="1">${esc(c.question)}</textarea></label>
             <label>본문 <span class="opt">(이 내용을 읽어줘요)</span><textarea data-i="${i}" data-k="answer" rows="5">${esc(c.answer)}</textarea></label>
+            <div class="attach" data-i="${i}">${attachInner(c.media, c.uploading)}</div>
             <button class="link danger" data-del="${i}">이 항목 빼기</button>
           </article>`
         : `<article class="draft-card">
             <label>문제<textarea data-i="${i}" data-k="question" rows="2">${esc(c.question)}</textarea></label>
             <label>정답<textarea data-i="${i}" data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
             <label>해설<textarea data-i="${i}" data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>
+            <div class="attach" data-i="${i}">${attachInner(c.media, c.uploading)}</div>
             <button class="link danger" data-del="${i}">이 카드 빼기</button>
           </article>`).join('')
         + picker
@@ -370,17 +487,24 @@
   }
 
   async function saveDraft() {
-    const cards = state.draft
-      .map((c) => c.kind === 'note'
-        ? { kind: 'note', question: (c.question || '').trim(), answer: (c.answer || '').trim(), explanation: '' }
-        : { question: (c.question || '').trim(), answer: (c.answer || '').trim(), explanation: (c.explanation || '').trim() })
-      .filter((c) => (c.kind === 'note' ? c.answer : c.question && c.answer));
+    const t = (s) => (s || '').trim();
+    const kept = state.draft.filter((c) => (c.kind === 'note' ? t(c.answer) : t(c.question) && t(c.answer)));
+    const dropped = state.draft.filter((c) => !kept.includes(c)); // 내용이 비어 저장되지 않는 항목의 첨부는 정리
+    const cards = kept.map((c) => {
+      const base = c.kind === 'note'
+        ? { kind: 'note', question: t(c.question), answer: t(c.answer), explanation: '' }
+        : { question: t(c.question), answer: t(c.answer), explanation: t(c.explanation) };
+      const media = (c.media || []).map(({ type, path, name, size }) => ({ type, path, name, size }));
+      return media.length ? { ...base, media } : base;
+    });
     if (!cards.length) return toast('저장할 내용이 없어요.');
     // 기본 목소리와 다른 목소리를 골랐을 때만 카드에 목소리를 붙입니다. (기본이면 나중에 기본 목소리를 바꿔도 따라감)
     const chosen = state.saveVoice && voiceExists(state.saveVoice) && state.saveVoice !== settings.voice ? state.saveVoice : '';
     if (chosen) cards.forEach((c) => { c.voice = chosen; });
+    if (state.draft.some((c) => c.uploading)) return toast('첨부를 올리는 중이에요. 끝나면 다시 저장해 주세요.');
     try {
       await db.addCards(state.deckId, cards, state.cards.length);
+      deleteMedia(dropped.flatMap((c) => mediaPaths(c.media)));
       state.draft = []; state.saveVoice = null; $('#memo').value = ''; renderDraft();
       await loadCards();
       toast(cards.length + '개 저장했어요.' + (chosen ? ` (목소리: ${voiceLabel(chosen)})` : ''));
@@ -603,6 +727,7 @@
                  <label>정답<textarea data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
                  <label>해설<textarea data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>`}
             <label>목소리<select data-k="voice"><option value="">기본 목소리 (${esc(voiceLabel(settings.voice))})</option>${$('#sVoice').innerHTML}</select></label>
+            <div class="attach" id="editAttach">${attachInner(editMedia ? editMedia.list : c.media, editMedia && editMedia.uploading)}</div>
             <div class="row">
               <button class="primary" data-act="save">저장</button>
               <button class="link" data-act="cancel">취소</button>
@@ -618,7 +743,7 @@
               ? `${c.question ? `<b>${esc(c.question)}</b>` : ''}<span class="txt">${esc(c.answer)}</span>`
               : `<b>${esc(c.question)}</b><span class="ans">${esc(c.answer)}</span>${c.explanation ? `<span class="exp">${esc(c.explanation)}</span>` : ''}`}
             <div class="foot">
-              <span class="tags">${c.kind === 'note' ? '<span class="tag">오디오북</span>' : c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}${voiceExists(c.voice) ? `<span class="tag voice-tag">${esc(voiceLabel(c.voice))}</span>` : ''}</span>
+              <span class="tags">${c.kind === 'note' ? '<span class="tag">오디오북</span>' : c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}${voiceExists(c.voice) ? `<span class="tag voice-tag">${esc(voiceLabel(c.voice))}</span>` : ''}${c.media && c.media.length ? `<span class="tag">첨부 ${c.media.length}</span>` : ''}</span>
               <span class="acts">
                 <button class="link" data-act="edit">편집</button>
                 <button class="link danger" data-act="del">삭제</button>
@@ -643,16 +768,21 @@
     if (note ? !patch.answer : !patch.question || !patch.answer) return toast(note ? '본문은 비워둘 수 없어요.' : '문제와 정답은 비워둘 수 없어요.');
     const newVoice = val('voice'); // '' = 기본 목소리 사용
     if (newVoice !== (card.voice || '')) patch.voice = newVoice; // 바뀐 때만 보내서, 목소리를 안 건드리면 DB 컬럼이 없어도 저장됨
+    if (editMedia && editMedia.uploading) return toast('첨부를 올리는 중이에요. 끝나면 저장해 주세요.');
+    const before = mediaPaths(card.media), after = editMedia ? mediaPaths(editMedia.list) : before;
+    if (before.join('|') !== after.join('|')) patch.media = editMedia.list.map(({ type, path, name, size }) => ({ type, path, name, size }));
     try {
       await db.patchCard(id, patch);
       Object.assign(card, patch); // 재생 큐가 같은 객체를 참조하므로 함께 갱신됨
-      editId = null; renderManage(); renderPlayer(null, false);
+      deleteMedia(before.filter((p) => !after.includes(p))); // 카드에서 뺀 첨부 파일 정리
+      editMedia = null; editId = null; renderManage(); renderPlayer(null, false);
       toast('카드를 수정했어요.');
       if (settings.engine === 'cloud' && settings.warm) warmTexts(speechItems(card)); // 고친 문장/목소리를 미리 만들어 둠
     } catch (e) {
-      toast('저장 실패: ' + ('voice' in patch && /voice/i.test(e.message || '')
-        ? '카드별 목소리를 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요.'
-        : (e.message || e)));
+      const msg = e.message || String(e);
+      toast('저장 실패: ' + (('voice' in patch && /voice/i.test(msg)) || ('media' in patch && /media/i.test(msg))
+        ? '카드별 목소리·첨부를 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요.'
+        : msg));
     }
   }
 
@@ -662,6 +792,7 @@
     try {
       if (state.playing) stop();
       await db.delCard(id);
+      deleteMedia(mediaPaths(card.media)); // 첨부 파일도 함께 삭제
       await loadCards();
       toast('카드를 삭제했어요.');
     } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
@@ -949,6 +1080,15 @@
     const q = $('#qText'), a = $('#aText');
     const note = !!card && card.kind === 'note';
     $('#player').dataset.kind = note ? 'note' : 'qa';
+    // 첨부: 같은 카드를 다시 그릴 때(문제 → 정답) 영상이 처음부터 다시 시작되지 않도록, 카드가 바뀔 때만 갱신
+    const box = $('#mediaBox');
+    const list = (card && card.media) || [];
+    const sig = card ? card.id + ':' + mediaPaths(list).join(',') : '';
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = list.map((m) => mediaHtml(m, false)).join('');
+    }
+    box.hidden = !list.length;
     if (!card) {
       q.hidden = false;
       q.textContent = total ? '재생 버튼을 누르면 순서대로 읽어줘요.' : '메모를 오디오북이나 카드로 만들면 여기에서 재생돼요.';
@@ -1119,7 +1259,8 @@
     };
     $('#delDeck').onclick = async () => {
       if (!confirm('이 폴더와 안의 카드를 모두 삭제할까요? 되돌릴 수 없어요.')) return;
-      try { await db.delDeck(state.deckId); await loadDecks(); } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
+      const files = state.cards.flatMap((c) => mediaPaths(c.media)); // 폴더 안 카드의 첨부 파일도 함께 삭제
+      try { await db.delDeck(state.deckId); deleteMedia(files); await loadDecks(); } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
     };
 
     $('#goMake').onclick = () => showView('make');
@@ -1144,22 +1285,47 @@
       if (t.dataset.i !== undefined) state.draft[Number(t.dataset.i)][t.dataset.k] = t.value;
     });
     $('#draft').addEventListener('change', (e) => {
-      if (e.target.id === 'mVoice') state.saveVoice = e.target.value === settings.voice ? null : e.target.value;
+      const t = e.target;
+      if (t.id === 'mVoice') state.saveVoice = t.value === settings.voice ? null : t.value;
+      else if (t.type === 'file') {
+        const box = t.closest('.attach');
+        const file = t.files && t.files[0];
+        t.value = '';
+        if (box && file) attachToDraft(Number(box.dataset.i), file);
+      }
     });
     $('#draft').addEventListener('click', (e) => {
       const t = e.target;
       if (t.id === 'saveDraft') return saveDraft();
       if (t.id === 'mVoiceTest') return previewVoice(t, $('#mVoice').value);
-      if (t.dataset.del !== undefined) { state.draft.splice(Number(t.dataset.del), 1); renderDraft(); }
+      if (t.dataset.rm !== undefined) { const box = t.closest('.attach'); if (box) removeDraftAttach(Number(box.dataset.i), Number(t.dataset.rm)); return; }
+      if (t.dataset.del !== undefined) {
+        const [gone] = state.draft.splice(Number(t.dataset.del), 1);
+        if (gone) deleteMedia(mediaPaths(gone.media));
+        renderDraft();
+      }
     });
 
+    $('#cardList').addEventListener('change', (e) => {
+      const t = e.target;
+      if (t.type !== 'file' || !t.closest('#editAttach')) return;
+      const file = t.files && t.files[0];
+      t.value = '';
+      if (file) attachToEdit(file);
+    });
     $('#cardList').addEventListener('click', (e) => {
+      if (e.target.dataset.rm !== undefined && e.target.closest('#editAttach')) return removeEditAttach(Number(e.target.dataset.rm));
       const btn = e.target.closest('[data-act]');
       const item = e.target.closest('.item');
       if (!btn || !item) return;
       const id = item.dataset.id;
-      if (btn.dataset.act === 'edit') { editId = id; renderManage(); $('#cardList').querySelector('.editing textarea')?.focus(); }
-      else if (btn.dataset.act === 'cancel') { editId = null; renderManage(); }
+      if (btn.dataset.act === 'edit') {
+        if (editMedia) deleteMedia(mediaPaths(editMedia.added)); // 다른 카드를 편집하려고 옮기면 이전 편집에서 올린 파일 정리
+        const card = state.cards.find((c) => c.id === id);
+        editId = id; editMedia = { id, list: [...((card && card.media) || [])], added: [], uploading: false };
+        renderManage(); $('#cardList').querySelector('.editing textarea')?.focus();
+      }
+      else if (btn.dataset.act === 'cancel') cancelEdit();
       else if (btn.dataset.act === 'save') saveEdit(id, item);
       else if (btn.dataset.act === 'del') deleteCard(id);
     });

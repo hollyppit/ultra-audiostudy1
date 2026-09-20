@@ -27,6 +27,7 @@ create table if not exists public.cards (
   position    integer,
   kind        text not null default 'qa' check (kind in ('qa', 'note')),  -- qa: 문제·정답 카드, note: 오디오북 항목
   voice       text,                                                       -- 카드별 목소리 id (비어 있으면 기본 목소리 사용)
+  media       jsonb not null default '[]'::jsonb,                         -- 첨부 [{type:'image'|'video', path, name, size}] (파일은 Storage 버킷 card-media)
   created_at  timestamptz not null default now()
 );
 
@@ -34,6 +35,7 @@ create table if not exists public.cards (
 alter table public.cards add column if not exists position integer;
 alter table public.cards add column if not exists kind text not null default 'qa';
 alter table public.cards add column if not exists voice text;
+alter table public.cards add column if not exists media jsonb not null default '[]'::jsonb;
 alter table public.cards drop constraint if exists cards_kind_check;
 alter table public.cards add constraint cards_kind_check check (kind in ('qa', 'note'));
 
