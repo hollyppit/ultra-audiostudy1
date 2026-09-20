@@ -680,7 +680,7 @@
       await db.reorder(ids);
       state.cards.forEach((c, i) => { c.position = i; });
       buildQueue(); renderPlayer(null, false);
-      toast(settings.shuffle ? '순서를 저장했어요. (섞어서 재생 중에는 무작위로 들려요)' : '순서를 저장했어요.');
+      toast(settings.shuffle ? '순서를 저장했어요. (지금은 "섞어서" 재생이라 무작위로 들려요)' : '순서를 저장했어요.');
     } catch (e) {
       toast(e.message || '순서 저장 실패');
       await loadCards();
@@ -733,17 +733,30 @@
   /* ---------- 재생 큐 ---------- */
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-  // 오디오북(note)은 섞지 않고 저장된 순서대로 먼저, 그 뒤에 문제 카드(설정에 따라 섞음)
+  // 재생 순서: 섞어서(기본) / 저장된 순서대로. 오디오북 항목과 문제 카드 모두에 똑같이 적용됩니다.
+  // - 섞어서: 헷갈린 카드는 횟수만큼 더 넣고 전부 섞음
+  // - 순서대로: 저장된 순서로 한 바퀴, 그 뒤에 헷갈린 카드만 다시 (많이 헷갈릴수록 최대 3번까지 추가 바퀴에 포함)
   function buildQueue() {
-    const notes = state.cards.filter((c) => c.kind === 'note');
-    const q = [];
-    for (const c of state.cards) {
-      if (c.kind === 'note') continue;
-      const n = settings.weak ? 1 + Math.min(c.wrong_count || 0, 3) : 1;
-      for (let i = 0; i < n; i++) q.push(c);
+    const weak = (c) => (settings.weak && c.kind !== 'note' ? Math.min(c.wrong_count || 0, 3) : 0);
+    if (settings.shuffle) {
+      const q = [];
+      for (const c of state.cards) for (let i = 0; i <= weak(c); i++) q.push(c);
+      state.queue = shuffle(q);
+    } else {
+      const q = [...state.cards];
+      for (let r = 1; r <= 3; r++) q.push(...state.cards.filter((c) => weak(c) >= r));
+      state.queue = q;
     }
-    state.queue = [...notes, ...(settings.shuffle ? shuffle(q) : q)];
     state.idx = 0;
+  }
+
+  function setShuffle(on) {
+    settings.shuffle = !!on;
+    persistSettings();
+    document.querySelectorAll('.order [data-order]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.order === (on ? 'shuffle' : 'seq'))));
+    const s = $('#sOrder');
+    if (s) s.value = on ? 'shuffle' : 'seq';
+    stop(); buildQueue(); renderPlayer(null, false);
   }
 
   // 긴 본문은 브라우저 음성이 중간에 끊기는 문제가 있어 문장 단위(약 180자)로 나눠 읽습니다.
@@ -1067,7 +1080,8 @@
     $('#oRate').textContent = settings.rate + '배';
     $('#sGap').value = settings.gap;
     $('#sWarm').checked = settings.warm;
-    $('#sShuffle').checked = settings.shuffle;
+    $('#sOrder').value = settings.shuffle ? 'shuffle' : 'seq';
+    document.querySelectorAll('.order [data-order]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.order === (settings.shuffle ? 'shuffle' : 'seq'))));
     $('#sWeak').checked = settings.weak;
     $('#sExplain').checked = settings.explain;
 
@@ -1080,7 +1094,8 @@
       audio.playbackRate = settings.rate;
     };
     $('#sGap').onchange = (e) => { settings.gap = Math.max(1, Math.min(20, Number(e.target.value) || 4)); persist(); };
-    $('#sShuffle').onchange = (e) => { settings.shuffle = e.target.checked; persist(); stop(); buildQueue(); renderPlayer(null, false); };
+    $('#sOrder').onchange = (e) => setShuffle(e.target.value === 'shuffle');
+    document.querySelectorAll('.order [data-order]').forEach((b) => { b.onclick = () => setShuffle(b.dataset.order === 'shuffle'); });
     $('#sWeak').onchange = (e) => { settings.weak = e.target.checked; persist(); stop(); buildQueue(); renderPlayer(null, false); };
     $('#sExplain').onchange = (e) => { settings.explain = e.target.checked; persist(); };
     $('#sWarm').onchange = (e) => { settings.warm = e.target.checked; persist(); };

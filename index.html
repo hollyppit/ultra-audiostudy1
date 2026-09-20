@@ -95,6 +95,15 @@
           </button>
         </div>
 
+        <div class="order" role="radiogroup" aria-label="재생 순서">
+          <button type="button" role="radio" data-order="shuffle" aria-checked="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>섞어서
+          </button>
+          <button type="button" role="radio" data-order="seq" aria-checked="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>순서대로
+          </button>
+        </div>
+
         <div class="marks">
           <button id="markWrong" class="mark wrong">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>
@@ -159,7 +168,12 @@
             <input id="sGap" type="number" min="1" max="20" step="1">
           </label>
           <label class="check"><input id="sWarm" type="checkbox"><span>저장할 때 음성 미리 만들기</span></label>
-          <label class="check"><input id="sShuffle" type="checkbox"><span>섞어서 재생</span></label>
+          <label>재생 순서
+            <select id="sOrder">
+              <option value="shuffle">섞어서 재생 (기본)</option>
+              <option value="seq">저장된 순서대로 재생</option>
+            </select>
+          </label>
           <label class="check"><input id="sWeak" type="checkbox"><span>헷갈린 카드를 더 자주</span></label>
           <label class="check"><input id="sExplain" type="checkbox"><span>해설도 읽기</span></label>
         </div>
@@ -211,7 +225,7 @@
         <button id="warmDeck" type="button" class="ghost">이 폴더 음성 미리 만들기</button>
         <span class="hint">지금 선택한 목소리로 만들어 둬요. 이미 만든 문장은 건너뛰어요.</span>
       </div>
-      <p id="manageHint" class="hint drag-hint" hidden>왼쪽 손잡이를 끌어서 순서를 바꿀 수 있어요. "섞어서 재생"을 끄면 이 순서대로 들려요.</p>
+      <p id="manageHint" class="hint drag-hint" hidden>왼쪽 손잡이를 끌어서 순서를 바꿀 수 있어요. 재생 순서를 "저장된 순서대로"로 하면 이 순서대로 들려요.</p>
       <div id="cardList" class="cardlist"></div>
       <button id="delDeck" class="link danger">이 폴더 삭제</button>
     </section>

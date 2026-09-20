@@ -186,6 +186,13 @@ main { max-width: 720px; margin: 0 auto; padding: 8px 20px calc(110px + env(safe
 .round.big:hover { background: #fff36a; }
 .player :focus-visible { outline-color: #fff; }
 
+.order { display: flex; justify-content: center; gap: 4px; width: fit-content; margin: 18px auto 0; padding: 4px; border-radius: 999px; background: rgba(255,255,255,.12); }
+.order button {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border: 0; border-radius: 999px;
+  background: none; color: rgba(255,255,255,.75); font-size: 13px; font-weight: 700;
+}
+.order button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.order button[aria-checked="true"] { background: #fff; color: #1d25b8; }
 .marks { display: flex; gap: 10px; margin-top: 22px; }
 .mark {
   flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 10px; border-radius: 16px;
