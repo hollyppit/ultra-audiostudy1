@@ -263,6 +263,11 @@ textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--br
   border: 2px solid var(--brand-text); border-right-color: transparent; animation: spin .8s linear infinite; vertical-align: -1px;
 }
 .warm-row { margin: 0 0 12px; }
+.save-voice { display: grid; gap: 8px; margin: 14px 0 4px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.save-voice > label { font-weight: 700; font-size: 14px; }
+.save-voice .hint { margin: 0; }
+.item .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.item.editing select[data-k="voice"] { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); font-weight: 400; }
 
 /* 목소리 선택 */
 .settings .field-row { display: grid; gap: 8px; }

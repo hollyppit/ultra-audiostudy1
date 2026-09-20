@@ -11,7 +11,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
 
-  const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, playing: false };
+  const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, playing: false, saveVoice: null };
   // 설정 버전 2: 기본을 클라우드 음성 + OpenAI 코랄로 변경. 옛 버전에 저장된 engine/voice 만 새 기본값으로 바꾸고 나머지 설정은 유지합니다.
   const SETTINGS_VER = 2;
   const DEFAULT_VOICE = 'oa_coral';
@@ -100,8 +100,8 @@
       if (this.cloud()) {
         const rows = arr.map((c, i) => ({ deck_id: deckId, position: start + i, ...c }));
         let { error } = await sb.from('cards').insert(rows);
-        if (error && rows.some((r) => r.kind === 'note')) {
-          throw new Error('오디오북을 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요. (' + error.message + ')');
+        if (error && rows.some((r) => r.kind === 'note' || r.voice)) {
+          throw new Error('오디오북·카드별 목소리를 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요. (' + error.message + ')');
         }
         if (error) ({ error } = await sb.from('cards').insert(rows.map(({ position, ...rest }) => rest)));
         if (error) throw error;
@@ -307,9 +307,48 @@
     renderDraft();
   }
 
+  /* 목소리 규칙
+     - 기본 목소리(settings.voice): 재생 설정에서 정하고 브라우저에 저장됩니다. 카드에 따로 정한 목소리가 없으면 이 목소리로 읽어요.
+     - 카드 목소리(card.voice): 저장할 때(또는 카드 편집에서) 다른 목소리를 고르면 그 카드에만 붙습니다. 기본 목소리는 바뀌지 않아요.
+     - 재생과 미리 만들기는 항상 "카드 목소리 → 없으면 기본 목소리" 순서로 골라서, 미리 만든 음성이 재생에 그대로 쓰입니다. */
+  function persistSettings() { try { localStorage.setItem('uas.settings', JSON.stringify(settings)); } catch { /* 저장 불가 환경 */ } }
+
+  function setVoice(v) { // 기본 목소리 변경
+    settings.voice = v;
+    persistSettings();
+    const s = $('#sVoice'), m = $('#mVoice');
+    if (s) s.value = v;
+    if (m && !state.saveVoice) m.value = v; // 저장 화면에서 따로 고르지 않았다면 기본 목소리를 따라감
+  }
+
+  async function previewVoice(btn, voice = settings.voice) {
+    if (state.playing) stop();
+    btn.disabled = true; btn.textContent = '불러오는 중…';
+    try {
+      const url = await audioUrl('안녕하세요. 이 목소리로 읽어 드릴게요.', voice);
+      audio.src = url;
+      audio.playbackRate = settings.rate;
+      await audio.play();
+      if (settings.engine !== 'cloud') toast('이 목소리는 "음성 엔진"을 클라우드 음성으로 바꿔야 재생 때 적용돼요.');
+    } catch (e) {
+      toast('미리 듣기 실패: ' + (e.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = '미리 듣기';
+    }
+  }
+
   function renderDraft() {
     const n = state.draft.length;
     const notes = n > 0 && state.draft[0].kind === 'note';
+    const chars = state.draft.reduce((sum, c) => sum + speechTexts(c).join('').length, 0);
+    const warmOn = settings.engine === 'cloud' && settings.warm;
+    const picker = `<div class="save-voice">
+        <label for="mVoice">이번에 저장하는 내용의 목소리</label>
+        <div class="voice-row"><select id="mVoice">${$('#sVoice').innerHTML}</select><button id="mVoiceTest" type="button" class="ghost">미리 듣기</button></div>
+        <p class="hint">기본 목소리는 재생 설정에서 정해요. 여기서 다른 목소리를 고르면 <b>이번에 저장하는 카드에만</b> 적용돼요.<br>${warmOn
+          ? `저장하면 약 ${chars.toLocaleString('ko-KR')}자를 이 목소리로 미리 만들어요.`
+          : '지금은 음성 미리 만들기가 꺼져 있어요. (재생 설정에서 "클라우드 음성"과 "저장할 때 음성 미리 만들기"를 켜세요)'}</p>
+      </div>`;
     $('#draft').innerHTML = n
       ? state.draft.map((c, i) => c.kind === 'note'
         ? `<article class="draft-card">
@@ -323,8 +362,11 @@
             <label>해설<textarea data-i="${i}" data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>
             <button class="link danger" data-del="${i}">이 카드 빼기</button>
           </article>`).join('')
+        + picker
         + `<div class="row"><button id="saveDraft" class="primary">${notes ? `오디오북 ${n}개 저장` : `카드 ${n}장 저장`}</button><span class="hint">${notes ? '읽을 내용에 틀린 곳이 없는지 확인했나요?' : '틀린 내용이 없는지 확인했나요?'}</span></div>`
       : '';
+    const m = $('#mVoice');
+    if (m) m.value = state.saveVoice && voiceExists(state.saveVoice) ? state.saveVoice : settings.voice;
   }
 
   async function saveDraft() {
@@ -334,13 +376,16 @@
         : { question: (c.question || '').trim(), answer: (c.answer || '').trim(), explanation: (c.explanation || '').trim() })
       .filter((c) => (c.kind === 'note' ? c.answer : c.question && c.answer));
     if (!cards.length) return toast('저장할 내용이 없어요.');
+    // 기본 목소리와 다른 목소리를 골랐을 때만 카드에 목소리를 붙입니다. (기본이면 나중에 기본 목소리를 바꿔도 따라감)
+    const chosen = state.saveVoice && voiceExists(state.saveVoice) && state.saveVoice !== settings.voice ? state.saveVoice : '';
+    if (chosen) cards.forEach((c) => { c.voice = chosen; });
     try {
       await db.addCards(state.deckId, cards, state.cards.length);
-      state.draft = []; $('#memo').value = ''; renderDraft();
+      state.draft = []; state.saveVoice = null; $('#memo').value = ''; renderDraft();
       await loadCards();
-      toast(cards.length + '개 저장했어요.');
+      toast(cards.length + '개 저장했어요.' + (chosen ? ` (목소리: ${voiceLabel(chosen)})` : ''));
       showView('listen');
-      if (settings.engine === 'cloud' && settings.warm) warmTexts(cards.flatMap(speechTexts)); // 기다리지 않고 백그라운드로
+      if (settings.engine === 'cloud' && settings.warm) warmTexts(cards.flatMap(speechItems)); // 기다리지 않고 백그라운드로
     } catch (e) { toast('저장 실패: ' + (e.message || e)); }
   }
 
@@ -557,6 +602,7 @@
               : `<label>문제<textarea data-k="question" rows="2">${esc(c.question)}</textarea></label>
                  <label>정답<textarea data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
                  <label>해설<textarea data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>`}
+            <label>목소리<select data-k="voice"><option value="">기본 목소리 (${esc(voiceLabel(settings.voice))})</option>${$('#sVoice').innerHTML}</select></label>
             <div class="row">
               <button class="primary" data-act="save">저장</button>
               <button class="link" data-act="cancel">취소</button>
@@ -572,7 +618,7 @@
               ? `${c.question ? `<b>${esc(c.question)}</b>` : ''}<span class="txt">${esc(c.answer)}</span>`
               : `<b>${esc(c.question)}</b><span class="ans">${esc(c.answer)}</span>${c.explanation ? `<span class="exp">${esc(c.explanation)}</span>` : ''}`}
             <div class="foot">
-              <span>${c.kind === 'note' ? '<span class="tag">오디오북</span>' : c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}</span>
+              <span class="tags">${c.kind === 'note' ? '<span class="tag">오디오북</span>' : c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}${voiceExists(c.voice) ? `<span class="tag voice-tag">${esc(voiceLabel(c.voice))}</span>` : ''}</span>
               <span class="acts">
                 <button class="link" data-act="edit">편집</button>
                 <button class="link danger" data-act="del">삭제</button>
@@ -580,6 +626,10 @@
             </div>
           </div>
         </article>`).join('');
+    // 편집 중인 카드의 목소리 선택값 반영 ('' = 기본 목소리 사용)
+    const cur = state.cards.find((c) => c.id === editId);
+    const vs = el.querySelector('.editing [data-k="voice"]');
+    if (cur && vs) vs.value = voiceExists(cur.voice) ? cur.voice : '';
   }
 
   async function saveEdit(id, itemEl) {
@@ -591,12 +641,19 @@
       ? { question: val('question'), answer: val('answer') }
       : { question: val('question'), answer: val('answer'), explanation: val('explanation') };
     if (note ? !patch.answer : !patch.question || !patch.answer) return toast(note ? '본문은 비워둘 수 없어요.' : '문제와 정답은 비워둘 수 없어요.');
+    const newVoice = val('voice'); // '' = 기본 목소리 사용
+    if (newVoice !== (card.voice || '')) patch.voice = newVoice; // 바뀐 때만 보내서, 목소리를 안 건드리면 DB 컬럼이 없어도 저장됨
     try {
       await db.patchCard(id, patch);
       Object.assign(card, patch); // 재생 큐가 같은 객체를 참조하므로 함께 갱신됨
       editId = null; renderManage(); renderPlayer(null, false);
       toast('카드를 수정했어요.');
-    } catch (e) { toast('저장 실패: ' + (e.message || e)); }
+      if (settings.engine === 'cloud' && settings.warm) warmTexts(speechItems(card)); // 고친 문장/목소리를 미리 만들어 둠
+    } catch (e) {
+      toast('저장 실패: ' + ('voice' in patch && /voice/i.test(e.message || '')
+        ? '카드별 목소리를 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요.'
+        : (e.message || e)));
+    }
   }
 
   async function deleteCard(id) {
@@ -736,8 +793,12 @@
     });
   }
 
-  async function audioUrl(text) {
-    const voice = settings.voice;
+  // 카드에 따로 정한 목소리가 있으면 그것을, 없거나 목록에서 사라졌으면 기본 목소리를 씁니다.
+  const voiceExists = (v) => !!v && [...$('#sVoice').options].some((o) => o.value === v);
+  const voiceOf = (c) => (c && voiceExists(c.voice) ? c.voice : settings.voice);
+  const voiceLabel = (v) => ([...$('#sVoice').options].find((o) => o.value === v) || {}).textContent || v;
+
+  async function audioUrl(text, voice = settings.voice) {
     const key = voice + '|' + text; // 목소리별로 따로 캐시
     if (audioCache.has(key)) return audioCache.get(key);
     const p = (async () => {
@@ -762,11 +823,11 @@
     });
   }
 
-  async function say(text, token) {
+  async function say(text, token, voice = settings.voice) {
     if (!text) return;
     if (settings.engine === 'cloud' && !cloudBroken) {
       try {
-        const url = await audioUrl(text);
+        const url = await audioUrl(text, voice);
         if (token !== runToken) return;
         await playUrl(url);
         return;
@@ -779,21 +840,22 @@
     await speakBrowser(text);
   }
 
-  async function speakLong(text, token) {
+  async function speakLong(text, token, voice = settings.voice) {
     const chunks = splitSpeech(text);
     for (let i = 0; i < chunks.length; i++) {
       if (token !== runToken) return;
-      if (settings.engine === 'cloud' && !cloudBroken && chunks[i + 1]) audioUrl(chunks[i + 1]).catch(() => {}); // 다음 조각 미리 받기
-      await say(chunks[i], token);
+      if (settings.engine === 'cloud' && !cloudBroken && chunks[i + 1]) audioUrl(chunks[i + 1], voice).catch(() => {}); // 다음 조각 미리 받기
+      await say(chunks[i], token, voice);
     }
   }
 
   /* ---------- 음성 미리 만들기 (저장할 때 / 관리 화면에서) ---------- */
-  // 재생할 때 실제로 읽는 문장들과 똑같이 나눠서 서버에 "만들어서 저장만" 요청합니다. (다음 재생부터 바로 나옴)
+  // 재생할 때 실제로 읽는 문장들과 똑같이 나눠서, 카드의 목소리로 서버에 "만들어서 저장만" 요청합니다. (다음 재생부터 바로 나옴)
   function speechTexts(c) {
     if (c.kind === 'note') return [c.question, ...splitSpeech(c.answer)].filter(Boolean);
     return [c.question, c.answer, settings.explain ? c.explanation : ''].filter(Boolean);
   }
+  const speechItems = (c) => speechTexts(c).map((text) => ({ text, voice: voiceOf(c) }));
 
   let warmRun = 0; // 0 이면 대기 중, 값이 바뀌면 이전 작업은 스스로 멈춤
 
@@ -802,19 +864,21 @@
     $('#warmText').textContent = msg || '';
   }
 
+  // items: [{ text, voice }] — 같은 목소리 + 같은 문장은 한 번만 보냅니다.
   async function warmTexts(all) {
-    const texts = [...new Set(all.filter(Boolean))];
-    if (!texts.length) return;
+    const seen = new Set();
+    const items = all.filter((it) => it.text && !seen.has(it.voice + '|' + it.text) && seen.add(it.voice + '|' + it.text));
+    if (!items.length) return;
     const token = ++warmRun;
-    const total = texts.length;
+    const total = items.length;
     let next = 0, done = 0, created = 0, failed = 0, streak = 0, aborted = false, lastMsg = '';
     warmUi(`음성 미리 만드는 중… 0 / ${total}`);
 
-    const one = async (text) => {
+    const one = async ({ text, voice }) => {
       let lastErr;
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const res = await fetch('/api/tts', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text, voice: settings.voice, warm: true }) });
+          const res = await fetch('/api/tts', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text, voice, warm: true }) });
           const j = await res.json().catch(() => ({}));
           if (res.ok) { if (!j.cached) created++; return; }
           if (res.status === 400) return; // 글자 수 초과 등은 건너뜀
@@ -828,8 +892,8 @@
 
     const worker = async () => {
       while (token === warmRun && !aborted && next < total) {
-        const text = texts[next++];
-        try { await one(text); streak = 0; }
+        const item = items[next++];
+        try { await one(item); streak = 0; }
         catch (e) { failed++; streak++; lastMsg = e.message || String(e); if (e.fatal || streak >= 3) aborted = true; }
         done++;
         if (token === warmRun) warmUi(`음성 미리 만드는 중… ${done} / ${total}`);
@@ -848,11 +912,12 @@
 
   function prefetch(c) {
     if (settings.engine !== 'cloud' || cloudBroken) return;
+    const v = voiceOf(c);
     if (c.kind === 'note') {
-      [c.question, ...splitSpeech(c.answer).slice(0, 2)].forEach((t) => t && audioUrl(t).catch(() => {}));
+      [c.question, ...splitSpeech(c.answer).slice(0, 2)].forEach((t) => t && audioUrl(t, v).catch(() => {}));
       return;
     }
-    [c.answer, settings.explain ? c.explanation : ''].forEach((t) => t && audioUrl(t).catch(() => {}));
+    [c.answer, settings.explain ? c.explanation : ''].forEach((t) => t && audioUrl(t, v).catch(() => {}));
   }
 
   /* ---------- 재생 루프 ---------- */
@@ -898,15 +963,16 @@
     state.playing = true; setPlayIcon(); updateMedia();
     while (token === runToken && state.idx < state.queue.length) {
       const c = state.queue[state.idx];
+      const v = voiceOf(c);
       if (c.kind === 'note') {
         renderPlayer(c, true);
         prefetch(c);
         setPhase('오디오북');
         if (c.question) {
-          await say(c.question, token); if (token !== runToken) return;
+          await say(c.question, token, v); if (token !== runToken) return;
           await wait(500); if (token !== runToken) return;
         }
-        await speakLong(c.answer, token); if (token !== runToken) return;
+        await speakLong(c.answer, token, v); if (token !== runToken) return;
         await wait(1200); if (token !== runToken) return;
         state.idx++;
         continue;
@@ -914,18 +980,18 @@
       renderPlayer(c, false);
       prefetch(c);
       setPhase('문제');
-      await say(c.question, token); if (token !== runToken) return;
+      await say(c.question, token, v); if (token !== runToken) return;
       for (let s = settings.gap; s > 0; s--) {
         setPhase(`생각하는 시간 ${s}`);
         await wait(1000); if (token !== runToken) return;
       }
       renderPlayer(c, true);
       setPhase('정답');
-      await say(c.answer, token); if (token !== runToken) return;
+      await say(c.answer, token, v); if (token !== runToken) return;
       if (settings.explain && c.explanation) {
         setPhase('해설');
         await wait(300); if (token !== runToken) return;
-        await say(c.explanation, token); if (token !== runToken) return;
+        await say(c.explanation, token, v); if (token !== runToken) return;
       }
       await wait(900); if (token !== runToken) return;
       state.idx++;
@@ -1007,23 +1073,8 @@
 
     const persist = () => localStorage.setItem('uas.settings', JSON.stringify(settings));
     $('#sEngine').onchange = (e) => { settings.engine = e.target.value; cloudBroken = false; persist(); };
-    $('#sVoice').onchange = (e) => { settings.voice = e.target.value; persist(); };
-    $('#voiceTest').onclick = async () => {
-      const btn = $('#voiceTest');
-      if (state.playing) stop();
-      btn.disabled = true; btn.textContent = '불러오는 중…';
-      try {
-        const url = await audioUrl('안녕하세요. 이 목소리로 읽어 드릴게요.');
-        audio.src = url;
-        audio.playbackRate = settings.rate;
-        await audio.play();
-        if (settings.engine !== 'cloud') toast('이 목소리는 "음성 엔진"을 클라우드 음성으로 바꿔야 재생 때 적용돼요.');
-      } catch (e) {
-        toast('미리 듣기 실패: ' + (e.message || e));
-      } finally {
-        btn.disabled = false; btn.textContent = '미리 듣기';
-      }
-    };
+    $('#sVoice').onchange = (e) => setVoice(e.target.value);
+    $('#voiceTest').onclick = () => previewVoice($('#voiceTest'));
     $('#sRate').oninput = (e) => {
       settings.rate = Number(e.target.value); $('#oRate').textContent = settings.rate + '배'; persist();
       audio.playbackRate = settings.rate;
@@ -1060,12 +1111,13 @@
     $('#warmStop').onclick = () => { stopWarm(); toast('음성 미리 만들기를 중단했어요. 이미 만든 건 남아 있어요.'); };
     $('#warmDeck').onclick = () => {
       if (settings.engine !== 'cloud') return toast('음성 엔진을 "클라우드 음성"으로 바꿔야 미리 만들 수 있어요.');
-      const texts = [...new Set(state.cards.flatMap(speechTexts))];
-      if (!texts.length) return toast('이 폴더에는 만들 음성이 없어요.');
-      const chars = texts.reduce((n, t) => n + t.length, 0);
-      const label = $('#sVoice').selectedOptions[0]?.textContent || settings.voice;
-      if (!confirm(`"${label}" 목소리로 최대 ${chars.toLocaleString('ko-KR')}자를 합성해요.\n이미 만들어 둔 문장은 건너뛰고, 새 문장만 비용이 나가요.\n\n진행할까요?`)) return;
-      warmTexts(texts);
+      const items = state.cards.flatMap(speechItems);
+      const uniq = [...new Map(items.map((it) => [it.voice + '|' + it.text, it])).values()];
+      if (!uniq.length) return toast('이 폴더에는 만들 음성이 없어요.');
+      const chars = uniq.reduce((n, it) => n + it.text.length, 0);
+      const voices = [...new Set(uniq.map((it) => voiceLabel(it.voice)))].join(', ');
+      if (!confirm(`카드별 목소리(${voices})로 최대 ${chars.toLocaleString('ko-KR')}자를 합성해요.\n이미 만들어 둔 문장은 건너뛰고, 새 문장만 비용이 나가요.\n\n진행할까요?`)) return;
+      warmTexts(items);
     };
     document.querySelectorAll('.seg [data-mode]').forEach((b) => { b.onclick = () => setMode(b.dataset.mode); });
     setMode(mode);
@@ -1076,9 +1128,13 @@
       const t = e.target;
       if (t.dataset.i !== undefined) state.draft[Number(t.dataset.i)][t.dataset.k] = t.value;
     });
+    $('#draft').addEventListener('change', (e) => {
+      if (e.target.id === 'mVoice') state.saveVoice = e.target.value === settings.voice ? null : e.target.value;
+    });
     $('#draft').addEventListener('click', (e) => {
       const t = e.target;
       if (t.id === 'saveDraft') return saveDraft();
+      if (t.id === 'mVoiceTest') return previewVoice(t, $('#mVoice').value);
       if (t.dataset.del !== undefined) { state.draft.splice(Number(t.dataset.del), 1); renderDraft(); }
     });
 

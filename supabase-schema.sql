@@ -26,12 +26,14 @@ create table if not exists public.cards (
   wrong_count integer not null default 0 check (wrong_count >= 0),
   position    integer,
   kind        text not null default 'qa' check (kind in ('qa', 'note')),  -- qa: 문제·정답 카드, note: 오디오북 항목
+  voice       text,                                                       -- 카드별 목소리 id (비어 있으면 기본 목소리 사용)
   created_at  timestamptz not null default now()
 );
 
 -- 이미 cards 테이블이 있던 경우를 위한 보강
 alter table public.cards add column if not exists position integer;
 alter table public.cards add column if not exists kind text not null default 'qa';
+alter table public.cards add column if not exists voice text;
 alter table public.cards drop constraint if exists cards_kind_check;
 alter table public.cards add constraint cards_kind_check check (kind in ('qa', 'note'));
 
