@@ -13,7 +13,7 @@
 
   const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, playing: false };
   const settings = Object.assign(
-    { engine: 'browser', rate: 1, gap: 4, shuffle: true, weak: true, explain: true },
+    { engine: 'browser', voice: 'f1', rate: 1, gap: 4, shuffle: true, weak: true, explain: true },
     safeJSON(localStorage.getItem('uas.settings'), {})
   );
 
@@ -729,17 +729,19 @@
   }
 
   async function audioUrl(text) {
-    if (audioCache.has(text)) return audioCache.get(text);
+    const voice = settings.voice;
+    const key = voice + '|' + text; // 목소리별로 따로 캐시
+    if (audioCache.has(key)) return audioCache.get(key);
     const p = (async () => {
-      const res = await fetch('/api/tts', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text }) });
+      const res = await fetch('/api/tts', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text, voice }) });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || 'HTTP ' + res.status);
       }
       return URL.createObjectURL(await res.blob());
     })();
-    audioCache.set(text, p);
-    p.catch(() => audioCache.delete(text));
+    audioCache.set(key, p);
+    p.catch(() => audioCache.delete(key));
     return p;
   }
 
@@ -927,6 +929,8 @@
 
   function bindSettings() {
     $('#sEngine').value = settings.engine;
+    if (![...$('#sVoice').options].some((o) => o.value === settings.voice)) settings.voice = 'f1';
+    $('#sVoice').value = settings.voice;
     $('#sRate').value = settings.rate;
     $('#oRate').textContent = settings.rate + '배';
     $('#sGap').value = settings.gap;
@@ -936,6 +940,23 @@
 
     const persist = () => localStorage.setItem('uas.settings', JSON.stringify(settings));
     $('#sEngine').onchange = (e) => { settings.engine = e.target.value; cloudBroken = false; persist(); };
+    $('#sVoice').onchange = (e) => { settings.voice = e.target.value; persist(); };
+    $('#voiceTest').onclick = async () => {
+      const btn = $('#voiceTest');
+      if (state.playing) stop();
+      btn.disabled = true; btn.textContent = '불러오는 중…';
+      try {
+        const url = await audioUrl('안녕하세요. 이 목소리로 읽어 드릴게요.');
+        audio.src = url;
+        audio.playbackRate = settings.rate;
+        await audio.play();
+        if (settings.engine !== 'cloud') toast('이 목소리는 "음성 엔진"을 클라우드 음성으로 바꿔야 재생 때 적용돼요.');
+      } catch (e) {
+        toast('미리 듣기 실패: ' + (e.message || e));
+      } finally {
+        btn.disabled = false; btn.textContent = '미리 듣기';
+      }
+    };
     $('#sRate').oninput = (e) => {
       settings.rate = Number(e.target.value); $('#oRate').textContent = settings.rate + '배'; persist();
       audio.playbackRate = settings.rate;
