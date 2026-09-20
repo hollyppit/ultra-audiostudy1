@@ -229,9 +229,45 @@ async function geminiTts({ voice, kid, text, env }) {
 
 // ---- 음성 저장(캐시) ----
 // 같은 목소리 + 같은 문장은 한 번만 합성하고 저장해 뒀다가 다시 돌려줍니다. (유료 API 재호출 방지)
-// - R2 버킷이 연결돼 있으면(변수명 AUDIO_CACHE) 그곳에 영구 저장합니다.
-// - 연결이 없으면 Cloudflare 엣지 캐시에 임시 저장합니다. (지역별·보관 기간이 보장되지 않는 보조 수단)
+// 저장 위치(위에서부터 우선):
+//  1) Supabase Storage: SUPABASE_URL + SUPABASE_SECRET_KEY 가 있으면 비공개 버킷(tts-cache)에 영구 저장 (버킷은 처음 쓸 때 자동 생성)
+//  2) Cloudflare R2: 버킷을 AUDIO_CACHE 라는 이름으로 연결했으면 영구 저장
+//  3) Cloudflare 엣지 캐시: 위 둘이 없을 때의 임시 저장 (지역별·보관 기간이 보장되지 않는 보조 수단)
 // 저장 여부와 무관하게 로그인/한도 검사는 항상 먼저 거칩니다.
+// ※ SUPABASE_SECRET_KEY 는 서버 전용 비밀 키입니다. 브라우저/config.js 에는 절대 넣지 마세요.
+
+const SB_BUCKET = 'tts-cache';
+const sbKey = (env) => env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_KEY || '';
+const sbReady = (env) => !!(env.SUPABASE_URL && sbKey(env));
+const sbBase = (env) => env.SUPABASE_URL.replace(/\/$/, '') + '/storage/v1';
+// 새 방식 키(sb_secret_...)는 apikey 헤더로만, 예전 JWT 방식 키는 Authorization 도 함께 보냅니다.
+function sbHeaders(env, extra = {}) {
+  const k = sbKey(env);
+  return k.startsWith('sb_') ? { apikey: k, ...extra } : { apikey: k, authorization: 'Bearer ' + k, ...extra };
+}
+
+async function sbGet(env, key) {
+  const res = await fetch(`${sbBase(env)}/object/${SB_BUCKET}/${key}`, { headers: sbHeaders(env) });
+  return res.ok ? { body: res.body, type: res.headers.get('content-type') || 'audio/mpeg', where: 'supabase' } : null;
+}
+
+async function sbPut(env, key, buf, type) {
+  const upload = () => fetch(`${sbBase(env)}/object/${SB_BUCKET}/${key}`, {
+    method: 'POST',
+    headers: sbHeaders(env, { 'content-type': type, 'x-upsert': 'true' }),
+    body: buf,
+  });
+  let res = await upload();
+  if (res.status === 404 || res.status === 400) {
+    // 버킷이 아직 없으면 비공개 버킷을 만들고 한 번 더 시도
+    const made = await fetch(`${sbBase(env)}/bucket`, {
+      method: 'POST',
+      headers: sbHeaders(env, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ id: SB_BUCKET, name: SB_BUCKET, public: false }),
+    });
+    if (made.ok || made.status === 409) res = await upload();
+  }
+}
 const TTS_CACHE_VER = 'v1'; // 프롬프트·설정을 크게 바꿔 예전 음성을 버리고 싶을 때 올리세요.
 
 async function ttsCacheKey(voice, text, env) {
@@ -244,6 +280,7 @@ const edgeKey = (key) => new Request('https://tts-cache.invalid/' + key);
 
 async function cacheGet(env, key) {
   try {
+    if (sbReady(env)) return await sbGet(env, key);
     if (env.AUDIO_CACHE) {
       const obj = await env.AUDIO_CACHE.get(key);
       return obj ? { body: obj.body, type: (obj.httpMetadata && obj.httpMetadata.contentType) || 'audio/mpeg', where: 'r2' } : null;
@@ -255,7 +292,8 @@ async function cacheGet(env, key) {
 
 async function cachePut(env, key, buf, type) {
   try {
-    if (env.AUDIO_CACHE) await env.AUDIO_CACHE.put(key, buf, { httpMetadata: { contentType: type } });
+    if (sbReady(env)) await sbPut(env, key, buf, type);
+    else if (env.AUDIO_CACHE) await env.AUDIO_CACHE.put(key, buf, { httpMetadata: { contentType: type } });
     else await caches.default.put(edgeKey(key), new Response(buf, { headers: { 'content-type': type, 'cache-control': 'public, max-age=2592000' } }));
   } catch { /* 저장 실패는 무시 */ }
 }
