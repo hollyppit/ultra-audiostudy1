@@ -107,8 +107,7 @@ async function handleCards({ request, env }) {
 // - Neural2: 자연스럽고 가격이 무난한 기본 목소리
 // - Chirp3-HD: 더 사람 같은 프리미엄 목소리 (요금이 더 높아요)
 // - kid: Google에는 아이 목소리가 따로 없어서, 여성 목소리의 음높이를 올려 아이 같은 톤으로 만듭니다.
-// - 네이버 클로바 보이스(CLOVA Voice, 접두사 nv_): 한국어 발음·억양이 자연스럽고 아이 목소리도 있어요. 네이버 클라우드 키가 따로 필요합니다.
-//   (v로 시작하는 speaker = 프리미엄 목소리, n으로 시작하는 speaker = 기본 목소리)
+// - oa_*: OpenAI 목소리 (OPENAI_API_KEY 필요)
 const VOICES = {
   f1: { name: 'ko-KR-Neural2-A' },
   f2: { name: 'ko-KR-Neural2-B' },
@@ -116,13 +115,6 @@ const VOICES = {
   m1: { name: 'ko-KR-Neural2-C' },
   m3: { name: 'ko-KR-Chirp3-HD-Charon' },
   kid: { name: 'ko-KR-Neural2-B', pitch: 7, rate: 1.05 },
-  nv_vara: { naver: 'vara' },           // 아라 (여)
-  nv_vmikyung: { naver: 'vmikyung' },   // 미경 (여)
-  nv_vyuna: { naver: 'vyuna' },         // 유나 (여)
-  nv_vdaeseong: { naver: 'vdaeseong' }, // 대성 (남)
-  nv_vian: { naver: 'vian' },           // 이안 (남)
-  nv_vdain: { naver: 'vdain' },         // 다인 (여자아이)
-  nv_nhajun: { naver: 'nhajun' },       // 하준 (남자아이)
   // OpenAI gpt-4o-mini-tts: 말투를 문장으로 지시할 수 있어요. 아이 톤은 지시문으로 만듭니다.
   oa_coral: { openai: 'coral' },
   oa_nova: { openai: 'nova' },
@@ -155,27 +147,6 @@ async function openaiTts({ voice, kid, text, env }) {
   return new Response(res.body, { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'private, max-age=86400' } });
 }
 
-// 네이버 클라우드 CLOVA Voice (tts-premium) → mp3 그대로 전달
-async function naverTts({ speaker, text, env }) {
-  if (!env.NAVER_TTS_ID || !env.NAVER_TTS_SECRET) {
-    return json({ error: '서버에 NAVER_TTS_ID / NAVER_TTS_SECRET이 설정되지 않았어요.' }, 501);
-  }
-  const res = await fetch('https://naveropenapi.apigw.ntruss.com/tts-premium/v1/tts', {
-    method: 'POST',
-    headers: {
-      'X-NCP-APIGW-API-KEY-ID': env.NAVER_TTS_ID,
-      'X-NCP-APIGW-API-KEY': env.NAVER_TTS_SECRET,
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({ speaker, text, format: 'mp3' }).toString(),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    return json({ error: '네이버 TTS 호출 실패 (' + res.status + ') ' + detail.slice(0, 200) }, 502);
-  }
-  return new Response(res.body, { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'private, max-age=86400' } });
-}
-
 async function handleTts({ request, env }) {
   const auth = await requireUser(request, env);
   if (!auth.ok) return json({ error: auth.reason }, 401);
@@ -186,7 +157,6 @@ async function handleTts({ request, env }) {
   if (!text || typeof text !== 'string') return json({ error: '텍스트가 비어 있어요.' }, 400);
   if (text.length > 1000) return json({ error: '한 번에 1,000자까지만 읽을 수 있어요.' }, 400);
 
-  if (voice.naver) return naverTts({ speaker: voice.naver, text, env });
   if (voice.openai) return openaiTts({ voice: voice.openai, kid: voice.kid, text, env });
   if (!env.TTS_API_KEY) return json({ error: '서버에 TTS_API_KEY가 설정되지 않았어요.' }, 501);
 
