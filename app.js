@@ -212,8 +212,9 @@
   }
 
   async function generate() {
+    stopDictation();
     const text = $('#memo').value.trim();
-    if (!text) return toast('메모를 붙여넣어 주세요.');
+    if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
     const btn = $('#generate');
     btn.disabled = true; btn.textContent = '변환 중…';
     try {
@@ -260,6 +261,78 @@
       toast(cards.length + '장 저장했어요.');
       showView('listen');
     } catch (e) { toast('저장 실패: ' + (e.message || e)); }
+  }
+
+  /* ---------- 말로 메모하기 (브라우저 음성 인식) ---------- */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null;
+  let dictating = false;
+
+  function setMicUi(on) {
+    dictating = on;
+    $('#mic').classList.toggle('on', on);
+    $('#mic').setAttribute('aria-pressed', String(on));
+    $('#micLabel').textContent = on ? '듣는 중… 누르면 멈춰요' : '말로 메모하기';
+    if (!on) $('#interim').textContent = '';
+  }
+
+  function stopDictation() {
+    if (!dictating) return;
+    dictating = false; // onend 에서 자동 재시작하지 않도록 먼저 내림
+    try { rec && rec.stop(); } catch { /* 이미 멈춤 */ }
+    setMicUi(false);
+  }
+
+  function startDictation() {
+    if (state.playing) stop(); // 재생 음성과 마이크가 겹치지 않게
+    rec = new SR();
+    rec.lang = 'ko-KR';
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    rec.onresult = (e) => {
+      const memo = $('#memo');
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript.trim();
+        if (!t) continue;
+        if (e.results[i].isFinal) {
+          memo.value += (memo.value && !memo.value.endsWith('\n') ? '\n' : '') + t;
+          memo.scrollTop = memo.scrollHeight;
+        } else {
+          interim += t + ' ';
+        }
+      }
+      $('#interim').textContent = interim;
+    };
+    rec.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        toast('마이크 사용이 막혀 있어요. 주소창 옆 자물쇠에서 마이크를 허용해 주세요.');
+        stopDictation();
+      } else if (e.error === 'audio-capture') {
+        toast('마이크를 찾지 못했어요.'); stopDictation();
+      } else if (e.error === 'network') {
+        toast('음성 인식 서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.'); stopDictation();
+      }
+      // no-speech 등은 무시: onend 에서 이어서 듣기
+    };
+    rec.onend = () => {
+      if (!dictating) return;
+      try { rec.start(); } catch { stopDictation(); } // 브라우저가 침묵 후 끊으면 이어서 듣기
+    };
+
+    try { rec.start(); setMicUi(true); } catch { toast('음성 인식을 시작하지 못했어요.'); }
+  }
+
+  function initDictation() {
+    const btn = $('#mic');
+    if (!SR) {
+      btn.disabled = true;
+      $('#micLabel').textContent = '이 브라우저는 음성 입력 미지원';
+      btn.title = 'Chrome, Edge, Safari에서 사용할 수 있어요.';
+      return;
+    }
+    btn.onclick = () => (dictating ? stopDictation() : startDictation());
   }
 
   /* ---------- 카드 관리 ---------- */
@@ -593,6 +666,7 @@
 
   /* ---------- 화면 전환 / 이벤트 ---------- */
   function showView(v) {
+    if (v !== 'make') stopDictation();
     document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === v)));
     ['listen', 'make', 'manage'].forEach((n) => { $('#view-' + n).hidden = n !== v; });
   }
@@ -640,6 +714,7 @@
     };
 
     $('#goMake').onclick = () => showView('make');
+    initDictation();
     $('#generate').onclick = generate;
     $('#draft').addEventListener('input', (e) => {
       const t = e.target;

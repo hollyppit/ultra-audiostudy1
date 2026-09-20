@@ -228,6 +228,12 @@ textarea, .draft input {
   background: var(--surface); box-shadow: var(--shadow); font-weight: 400; resize: vertical;
 }
 textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: 0; border-color: transparent; }
+.mic-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.mic svg { width: 18px; height: 18px; }
+.mic.on { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.4s ease-in-out infinite; }
+.mic:disabled { opacity: .5; cursor: not-allowed; }
+.interim { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, .5); } 50% { box-shadow: 0 0 0 8px rgba(229, 72, 77, 0); } }
 .row { display: flex; align-items: center; gap: 14px; margin: 14px 0; flex-wrap: wrap; }
 .primary { padding: 13px 22px; border: 0; border-radius: 14px; background: var(--brand); color: #fff; font-weight: 800; box-shadow: 0 6px 16px rgba(58, 69, 240, .3); }
 .primary:hover { background: var(--brand-hover); }
@@ -285,4 +291,5 @@ textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--br
 @media (prefers-reduced-motion: reduce) {
   .player.playing .wave span { animation: none; height: 16px; }
   .track i, .toast, .round, .settings summary::after { transition: none; }
+  .mic.on { animation: none; }
 }

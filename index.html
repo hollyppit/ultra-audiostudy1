@@ -135,6 +135,13 @@
       <label class="field"><span class="sr">메모 붙여넣기</span>
         <textarea id="memo" rows="9" placeholder="공부한 내용을 그대로 붙여넣으세요.&#10;&#10;AI를 못 쓰는 환경에서는 한 줄에 하나씩&#10;질문 :: 정답 :: 해설(선택)&#10;형식으로 적어도 카드가 됩니다."></textarea>
       </label>
+      <div class="mic-row">
+        <button id="mic" class="ghost mic" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          <span id="micLabel">말로 메모하기</span>
+        </button>
+        <span id="interim" class="interim" aria-live="polite"></span>
+      </div>
       <div class="row">
         <button id="generate" class="primary">카드로 변환</button>
         <span class="hint">변환 후 내용을 꼭 확인하고 저장하세요.</span>
