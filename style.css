@@ -293,6 +293,8 @@ body.selecting main { padding-bottom: 210px; }
 }
 .attach .attach-btn.busy { opacity: .6; cursor: wait; }
 .attach .hint { margin: 0; }
+.memo-attach { margin-top: 10px; }
+.memo-attach-hint { margin: 6px 0 0; }
 
 /* 음성 미리 만들기 진행 표시 */
 .warm-status {

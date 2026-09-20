@@ -11,7 +11,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
 
-  const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, playing: false, saveVoice: null };
+  const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, playing: false, saveVoice: null, memoMedia: [], memoUploading: false };
   // 설정 버전 2: 기본을 클라우드 음성 + OpenAI 코랄로 변경. 옛 버전에 저장된 engine/voice 만 새 기본값으로 바꾸고 나머지 설정은 유지합니다.
   const SETTINGS_VER = 2;
   const DEFAULT_VOICE = 'oa_coral';
@@ -293,8 +293,10 @@
     stopDictation();
     const text = $('#memo').value.trim();
     if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
+    if (state.memoUploading) return toast('첨부를 올리는 중이에요. 끝나면 다시 눌러 주세요.');
     const btn = $('#generate');
-    deleteMedia(state.draft.flatMap((c) => mediaPaths(c.media))); // 이전 초안을 버리고 새로 만들면 그 초안에 올려 둔 첨부도 정리
+    const prevDraft = state.draft;
+    const oldPaths = state.draft.flatMap((c) => mediaPaths(c.media)); // 이전 초안의 첨부는 새 초안을 만든 뒤 (쓰이지 않는 것만) 정리
     const idleLabel = btn.textContent;
     btn.disabled = true; btn.textContent = mode === 'audiobook' ? '정리 중…' : '변환 중…';
     try {
@@ -327,7 +329,12 @@
     } finally {
       btn.disabled = false; btn.textContent = idleLabel;
     }
-    renderDraft();
+    if (state.draft !== prevDraft) { // 새 초안이 만들어진 경우에만 (변환에 실패해 이전 초안이 그대로면 건드리지 않음)
+      // 메모 화면에서 붙인 첨부를 만들어진 모든 카드에 붙임
+      state.draft.forEach((c) => { c.media = state.memoMedia.map((m) => ({ ...m })); });
+      renderDraft();
+      deleteMediaSafe(oldPaths);
+    } else renderDraft();
   }
 
   /* ---------- 이미지·영상 첨부 (Supabase Storage) ----------
@@ -369,6 +376,53 @@
     try { await fetch('/api/media/delete', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ paths: list }) }); } catch { /* 무시 */ }
   }
 
+  // 메모에서 첨부한 파일은 만들어진 여러 카드가 함께 쓰므로, 다른 곳에서 아직 쓰는 파일은 지우지 않습니다.
+  // 쓰는 곳 = 저장된 모든 카드(모든 폴더) + 만들기 화면의 초안/메모 첨부 + 편집 중인 목록.
+  // 저장된 카드를 확인하지 못하면(오류) 안전하게 아무것도 지우지 않습니다. (용량만 남고, 카드에서 파일이 사라지는 일은 없음)
+  async function mediaRefs() {
+    const refs = new Set();
+    const add = (list) => (list || []).forEach((m) => { if (m && m.path) refs.add(m.path); });
+    state.cards.forEach((c) => add(c.media));
+    state.draft.forEach((c) => add(c.media));
+    add(state.memoMedia);
+    if (editMedia) add(editMedia.list);
+    if (db.cloud()) {
+      const { data, error } = await sb.from('cards').select('media');
+      if (error) return null;
+      data.forEach((c) => add(c.media));
+    } else {
+      local.read().cards.forEach((c) => add(c.media));
+    }
+    return refs;
+  }
+
+  async function deleteMediaSafe(paths) {
+    const list = [...new Set((paths || []).filter(Boolean))];
+    if (!list.length) return;
+    const refs = await mediaRefs();
+    if (!refs) return;
+    deleteMedia(list.filter((p) => !refs.has(p)));
+  }
+
+  /* 메모 화면의 첨부: 정리/변환하면 그 메모로 만든 "모든 카드"에 함께 붙습니다. (카드마다 빼거나 더 추가할 수 있어요) */
+  const refreshMemoAttach = () => { const b = $('#memoAttach'); if (b) b.innerHTML = attachInner(state.memoMedia, state.memoUploading); };
+
+  async function attachToMemo(file) {
+    if (!file) return;
+    state.memoUploading = true; refreshMemoAttach();
+    try {
+      state.memoMedia.push(await uploadMedia(file));
+      toast('첨부했어요. 정리하면 만들어지는 모든 카드에 함께 붙어요.');
+    } catch (e) { toast('첨부 실패: ' + (e.message || e)); }
+    finally { state.memoUploading = false; refreshMemoAttach(); }
+  }
+
+  function removeMemoAttach(j) {
+    const [m] = state.memoMedia.splice(j, 1);
+    refreshMemoAttach();
+    if (m) deleteMediaSafe([m.path]);
+  }
+
   function mediaHtml(m, thumb) {
     const u = esc(mediaUrl(m));
     return m.type === 'video'
@@ -406,8 +460,8 @@
     const c = state.draft[i];
     if (!c || !c.media) return;
     const [m] = c.media.splice(j, 1);
-    if (m) deleteMedia([m.path]);
     refreshDraftAttach(c);
+    if (m) deleteMediaSafe([m.path]); // 메모에서 붙인 공통 첨부는 다른 카드가 쓰고 있으면 파일을 지우지 않음
   }
 
   // 관리 화면 편집 중인 카드의 첨부 상태: list = 현재 목록, added = 이번 편집에서 새로 올린 것 (취소하면 지움)
@@ -526,9 +580,11 @@
     if (state.draft.some((c) => c.uploading)) return toast('첨부를 올리는 중이에요. 끝나면 다시 저장해 주세요.');
     try {
       await db.addCards(state.deckId, cards, state.cards.length);
-      deleteMedia(dropped.flatMap((c) => mediaPaths(c.media)));
-      state.draft = []; state.saveVoice = null; $('#memo').value = ''; renderDraft();
+      state.draft = []; state.saveVoice = null; $('#memo').value = '';
+      state.memoMedia = []; refreshMemoAttach(); // 메모에서 붙인 첨부는 이제 저장된 카드들이 가짐
+      renderDraft();
       await loadCards();
+      deleteMediaSafe(dropped.flatMap((c) => mediaPaths(c.media))); // 내용이 비어 저장되지 않은 항목의 첨부 (다른 카드가 쓰는 파일은 남김)
       toast(cards.length + '개 저장했어요.' + (chosen ? ` (목소리: ${voiceLabel(chosen)})` : ''));
       showView('listen');
       if (settings.engine === 'cloud' && settings.warm) warmTexts(cards.flatMap(speechItems)); // 기다리지 않고 백그라운드로
@@ -860,8 +916,9 @@
     try {
       await db.patchCard(id, patch);
       Object.assign(card, patch); // 재생 큐가 같은 객체를 참조하므로 함께 갱신됨
-      deleteMedia(before.filter((p) => !after.includes(p))); // 카드에서 뺀 첨부 파일 정리
+      const removed = before.filter((p) => !after.includes(p)); // 카드에서 뺀 첨부 파일 (다른 카드가 쓰는 파일은 남김)
       editMedia = null; editId = null; renderManage(); renderPlayer(null, false);
+      deleteMediaSafe(removed);
       toast('카드를 수정했어요.');
       if (settings.engine === 'cloud' && settings.warm) warmTexts(speechItems(card)); // 고친 문장/목소리를 미리 만들어 둠
     } catch (e) {
@@ -878,8 +935,8 @@
     try {
       if (state.playing) stop();
       await db.delCard(id);
-      deleteMedia(mediaPaths(card.media)); // 첨부 파일도 함께 삭제
       await loadCards();
+      deleteMediaSafe(mediaPaths(card.media)); // 첨부 파일도 함께 삭제 (같은 파일을 쓰는 다른 카드가 있으면 남김)
       toast('카드를 삭제했어요.');
     } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
   }
@@ -1349,10 +1406,19 @@
     $('#delDeck').onclick = async () => {
       if (!confirm('이 폴더와 안의 카드를 모두 삭제할까요? 되돌릴 수 없어요.')) return;
       const files = state.cards.flatMap((c) => mediaPaths(c.media)); // 폴더 안 카드의 첨부 파일도 함께 삭제
-      try { await db.delDeck(state.deckId); deleteMedia(files); await loadDecks(); } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
+      try { await db.delDeck(state.deckId); await loadDecks(); deleteMediaSafe(files); } catch (e) { toast('삭제 실패: ' + (e.message || e)); }
     };
 
     $('#goMake').onclick = () => showView('make');
+    $('#memoAttach').addEventListener('change', (e) => {
+      const t = e.target;
+      if (t.type !== 'file') return;
+      const file = t.files && t.files[0];
+      t.value = '';
+      if (file) attachToMemo(file);
+    });
+    $('#memoAttach').addEventListener('click', (e) => { if (e.target.dataset.rm !== undefined) removeMemoAttach(Number(e.target.dataset.rm)); });
+    refreshMemoAttach();
     $('#warmStop').onclick = () => { stopWarm(); toast('음성 미리 만들기를 중단했어요. 이미 만든 건 남아 있어요.'); };
     $('#warmDeck').onclick = () => {
       if (settings.engine !== 'cloud') return toast('음성 엔진을 "클라우드 음성"으로 바꿔야 미리 만들 수 있어요.');
@@ -1390,8 +1456,8 @@
       if (t.dataset.rm !== undefined) { const box = t.closest('.attach'); if (box) removeDraftAttach(Number(box.dataset.i), Number(t.dataset.rm)); return; }
       if (t.dataset.del !== undefined) {
         const [gone] = state.draft.splice(Number(t.dataset.del), 1);
-        if (gone) deleteMedia(mediaPaths(gone.media));
         renderDraft();
+        if (gone) deleteMediaSafe(mediaPaths(gone.media));
       }
     });
 
