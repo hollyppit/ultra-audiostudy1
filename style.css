@@ -228,7 +228,10 @@ textarea, .draft input {
   background: var(--surface); box-shadow: var(--shadow); font-weight: 400; resize: vertical;
 }
 textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: 0; border-color: transparent; }
-.mic-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.mic-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.stt-status { margin: 8px 0 0; }
+.stt-status.busy::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; border: 2px solid var(--brand); border-right-color: transparent; animation: spin .8s linear infinite; vertical-align: -1px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .mic svg { width: 18px; height: 18px; }
 .mic.on { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.4s ease-in-out infinite; }
 .mic:disabled { opacity: .5; cursor: not-allowed; }
@@ -291,5 +294,5 @@ textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--br
 @media (prefers-reduced-motion: reduce) {
   .player.playing .wave span { animation: none; height: 16px; }
   .track i, .toast, .round, .settings summary::after { transition: none; }
-  .mic.on { animation: none; }
+  .mic.on, .stt-status.busy::before { animation: none; }
 }

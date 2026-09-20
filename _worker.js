@@ -109,6 +109,49 @@ async function handleTts({ request, env }) {
   return new Response(bytes, { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'private, max-age=86400' } });
 }
 
+// ---- /api/stt ----
+
+// 녹음 파일(음성) → 글자. 브라우저가 파일을 약 1분 단위 16-bit PCM(WAV 본문)으로 잘라 base64 로 보내면,
+// Google Cloud Speech-to-Text (동기 recognize, 1분 이하 오디오) 로 변환해 텍스트를 돌려줍니다.
+// 키는 STT_API_KEY, 없으면 TTS_API_KEY 를 함께 씁니다. (해당 키에 Speech-to-Text API 사용 권한이 있어야 해요)
+async function handleStt({ request, env }) {
+  const auth = await requireUser(request, env);
+  if (!auth.ok) return json({ error: auth.reason }, 401);
+  const key = env.STT_API_KEY || env.TTS_API_KEY;
+  if (!key) return json({ error: '서버에 STT_API_KEY(또는 TTS_API_KEY)가 설정되지 않았어요.' }, 501);
+
+  let audio, rate;
+  try { ({ audio, rate } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  if (!audio || typeof audio !== 'string') return json({ error: '오디오가 비어 있어요.' }, 400);
+  if (audio.length > 3_500_000) return json({ error: '오디오 조각이 너무 길어요. (1분 이하로 잘라 보내야 해요)' }, 400);
+  rate = Number(rate) || 16000;
+  if (rate < 8000 || rate > 48000) return json({ error: '지원하지 않는 샘플레이트예요.' }, 400);
+
+  const res = await fetch('https://speech.googleapis.com/v1/speech:recognize?key=' + encodeURIComponent(key), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      config: {
+        encoding: 'LINEAR16',
+        sampleRateHertz: rate,
+        languageCode: 'ko-KR',
+        enableAutomaticPunctuation: true,
+        model: env.STT_MODEL || 'default',
+      },
+      audio: { content: audio },
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    return json({ error: 'STT 호출 실패 (' + res.status + ') ' + detail.slice(0, 200) }, 502);
+  }
+
+  const data = await res.json();
+  const text = (data.results || []).map((r) => (r.alternatives && r.alternatives[0] ? r.alternatives[0].transcript : '')).join(' ').trim();
+  return json({ text });
+}
+
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
@@ -116,6 +159,7 @@ export default {
       if (request.method !== 'POST') return json({ error: 'POST만 지원해요.' }, 405);
       if (pathname === '/api/cards') return handleCards({ request, env });
       if (pathname === '/api/tts') return handleTts({ request, env });
+      if (pathname === '/api/stt') return handleStt({ request, env });
       return json({ error: '없는 API예요.' }, 404);
     }
     return env.ASSETS.fetch(request);

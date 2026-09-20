@@ -140,8 +140,14 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
           <span id="micLabel">말로 메모하기</span>
         </button>
+        <button id="sttBtn" class="ghost mic" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/></svg>
+          <span id="sttLabel">녹음 파일 → 글자</span>
+        </button>
+        <input id="sttFile" type="file" accept="audio/*" hidden>
         <span id="interim" class="interim" aria-live="polite"></span>
       </div>
+      <p id="sttStatus" class="hint stt-status" aria-live="polite" hidden></p>
       <div class="row">
         <button id="generate" class="primary">카드로 변환</button>
         <span class="hint">변환 후 내용을 꼭 확인하고 저장하세요.</span>

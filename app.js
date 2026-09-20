@@ -335,6 +335,122 @@
     btn.onclick = () => (dictating ? stopDictation() : startDictation());
   }
 
+  /* ---------- 녹음 파일 → 글자 (클라우드 STT) ---------- */
+  // 파일을 16kHz 모노로 디코딩해 약 55초 조각(조용한 지점에서 절단)으로 나눠 /api/stt 로 순서대로 보냅니다.
+  const STT_MAX_MIN = 20;
+  const STT_MAX_MB = 60;
+  let sttRun = 0; // 취소용 토큰 (0 이면 대기 중)
+
+  function sttUi(busy, msg) {
+    const s = $('#sttStatus');
+    s.hidden = !msg;
+    s.textContent = msg || '';
+    s.classList.toggle('busy', busy);
+    $('#sttLabel').textContent = busy ? '변환 취소' : '녹음 파일 → 글자';
+  }
+
+  function sttSplit(mono, sr) {
+    const win = Math.max(1, Math.floor(0.05 * sr));
+    const pts = [0];
+    let start = 0;
+    while (mono.length - start > 58 * sr) {
+      const lo = start + 45 * sr, hi = start + 58 * sr;
+      let best = start + 55 * sr, bestE = Infinity;
+      for (let p = lo; p + win < hi; p += win) {
+        let e = 0;
+        for (let i = p; i < p + win; i++) e += mono[i] * mono[i];
+        if (e < bestE) { bestE = e; best = p + (win >> 1); }
+      }
+      pts.push(best); start = best;
+    }
+    pts.push(mono.length);
+    return pts;
+  }
+
+  function sttEncode(f32, from, to) {
+    const bytes = new Uint8Array((to - from) * 2);
+    const dv = new DataView(bytes.buffer);
+    for (let i = 0; i < to - from; i++) {
+      const s = Math.max(-1, Math.min(1, f32[from + i]));
+      dv.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+
+  async function sttPost(audio, rate) {
+    const res = await fetch('/api/stt', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ audio, rate }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { const err = new Error(j.error || 'HTTP ' + res.status); err.status = res.status; throw err; }
+    return j.text || '';
+  }
+
+  async function transcribeFile(file) {
+    if (file.size > STT_MAX_MB * 1024 * 1024) return toast(`파일이 너무 커요. ${STT_MAX_MB}MB 이하로 올려 주세요.`);
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return toast('이 브라우저는 오디오 변환을 지원하지 않아요.');
+    const token = ++sttRun;
+    if (state.playing) stop();
+    stopDictation();
+    sttUi(true, '파일을 읽는 중…');
+
+    try {
+      const ctx = new Ctx({ sampleRate: 16000 });
+      let buf;
+      try { buf = await ctx.decodeAudioData(await file.arrayBuffer()); }
+      catch { throw new Error('이 파일 형식을 읽지 못했어요. mp3, m4a, wav 파일을 사용해 주세요.'); }
+      finally { ctx.close && ctx.close(); }
+      if (token !== sttRun) return;
+
+      if (buf.duration > STT_MAX_MIN * 60) throw new Error(`녹음이 너무 길어요. ${STT_MAX_MIN}분 이하로 나눠서 올려 주세요.`);
+
+      const sr = buf.sampleRate, ch = buf.numberOfChannels;
+      const mono = new Float32Array(buf.length);
+      for (let c = 0; c < ch; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) mono[i] += d[i] / ch; }
+
+      const pts = sttSplit(mono, sr);
+      const total = pts.length - 1;
+      const memo = $('#memo');
+      let got = 0;
+      for (let k = 0; k < total; k++) {
+        if (token !== sttRun) return;
+        sttUi(true, `글자로 바꾸는 중… ${k + 1} / ${total}`);
+        const audio = sttEncode(mono, pts[k], pts[k + 1]);
+        let text;
+        try { text = await sttPost(audio, sr); }
+        catch (e) {
+          if (e.status && e.status < 500 && e.status !== 429) throw e; // 로그인/키 문제는 즉시 중단
+          text = await sttPost(audio, sr); // 일시 오류는 1회 재시도
+        }
+        if (token !== sttRun) return;
+        if (text) {
+          memo.value += (memo.value && !memo.value.endsWith('\n') ? '\n' : '') + text;
+          memo.scrollTop = memo.scrollHeight;
+          got++;
+        }
+      }
+      sttUi(false, '');
+      toast(got ? `${Math.max(1, Math.round(buf.duration / 60))}분 분량을 글자로 바꿨어요. 내용을 확인해 주세요.` : '인식된 말이 없어요. 소리가 또렷한 파일인지 확인해 주세요.');
+    } catch (e) {
+      if (token === sttRun) { sttUi(false, ''); toast('변환 실패: ' + (e.message || e)); }
+    } finally {
+      if (token === sttRun) sttRun = 0;
+    }
+  }
+
+  function initStt() {
+    $('#sttBtn').onclick = () => {
+      if (sttRun) { sttRun = 0; sttUi(false, '변환을 취소했어요. (이미 바뀐 글자는 남아 있어요)'); return; }
+      $('#sttFile').click();
+    };
+    $('#sttFile').onchange = (e) => {
+      const f = e.target.files[0];
+      e.target.value = ''; // 같은 파일을 다시 고를 수 있게
+      if (f) transcribeFile(f);
+    };
+  }
+
   /* ---------- 카드 관리 ---------- */
   let editId = null;
 
@@ -715,6 +831,7 @@
 
     $('#goMake').onclick = () => showView('make');
     initDictation();
+    initStt();
     $('#generate').onclick = generate;
     $('#draft').addEventListener('input', (e) => {
       const t = e.target;
