@@ -227,7 +227,40 @@ async function geminiTts({ voice, kid, text, env }) {
   return new Response(pcmToWav(pcm, rate), { headers: { 'content-type': 'audio/wav', 'cache-control': 'private, max-age=86400' } });
 }
 
-async function handleTts({ request, env }) {
+// ---- 음성 저장(캐시) ----
+// 같은 목소리 + 같은 문장은 한 번만 합성하고 저장해 뒀다가 다시 돌려줍니다. (유료 API 재호출 방지)
+// - R2 버킷이 연결돼 있으면(변수명 AUDIO_CACHE) 그곳에 영구 저장합니다.
+// - 연결이 없으면 Cloudflare 엣지 캐시에 임시 저장합니다. (지역별·보관 기간이 보장되지 않는 보조 수단)
+// 저장 여부와 무관하게 로그인/한도 검사는 항상 먼저 거칩니다.
+const TTS_CACHE_VER = 'v1'; // 프롬프트·설정을 크게 바꿔 예전 음성을 버리고 싶을 때 올리세요.
+
+async function ttsCacheKey(voice, text, env) {
+  const variant = [TTS_CACHE_VER, JSON.stringify(voice), env.OPENAI_TTS_MODEL || '', env.GEMINI_TTS_MODEL || ''].join('|');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(variant + '\n' + text));
+  return 'tts/' + [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const edgeKey = (key) => new Request('https://tts-cache.invalid/' + key);
+
+async function cacheGet(env, key) {
+  try {
+    if (env.AUDIO_CACHE) {
+      const obj = await env.AUDIO_CACHE.get(key);
+      return obj ? { body: obj.body, type: (obj.httpMetadata && obj.httpMetadata.contentType) || 'audio/mpeg', where: 'r2' } : null;
+    }
+    const hit = await caches.default.match(edgeKey(key));
+    return hit ? { body: hit.body, type: hit.headers.get('content-type') || 'audio/mpeg', where: 'edge' } : null;
+  } catch { return null; } // 저장소 문제로 재생이 막히지 않게 무시
+}
+
+async function cachePut(env, key, buf, type) {
+  try {
+    if (env.AUDIO_CACHE) await env.AUDIO_CACHE.put(key, buf, { httpMetadata: { contentType: type } });
+    else await caches.default.put(edgeKey(key), new Response(buf, { headers: { 'content-type': type, 'cache-control': 'public, max-age=2592000' } }));
+  } catch { /* 저장 실패는 무시 */ }
+}
+
+async function handleTts({ request, env, ctx }) {
   const auth = await requireUser(request, env);
   if (!auth.ok) return json({ error: auth.reason }, 401);
 
@@ -237,6 +270,23 @@ async function handleTts({ request, env }) {
   if (!text || typeof text !== 'string') return json({ error: '텍스트가 비어 있어요.' }, 400);
   if (text.length > 1000) return json({ error: '한 번에 1,000자까지만 읽을 수 있어요.' }, 400);
 
+  const key = await ttsCacheKey(voice, text, env);
+  const hit = await cacheGet(env, key);
+  if (hit) {
+    return new Response(hit.body, { headers: { 'content-type': hit.type, 'cache-control': 'private, max-age=86400', 'x-tts-cache': 'hit-' + hit.where } });
+  }
+
+  const res = await synthesize({ voice, text, env });
+  if (!res.ok) return res; // 오류 응답은 저장하지 않음
+
+  const type = res.headers.get('content-type') || 'audio/mpeg';
+  const buf = await res.arrayBuffer();
+  const save = cachePut(env, key, buf, type);
+  if (ctx && ctx.waitUntil) ctx.waitUntil(save); else await save;
+  return new Response(buf, { headers: { 'content-type': type, 'cache-control': 'private, max-age=86400', 'x-tts-cache': 'miss' } });
+}
+
+async function synthesize({ voice, text, env }) {
   if (voice.openai) return openaiTts({ voice: voice.openai, kid: voice.kid, text, env });
   if (voice.gemini) return geminiTts({ voice: voice.gemini, kid: voice.kid, text, env });
   if (!env.TTS_API_KEY) return json({ error: '서버에 TTS_API_KEY가 설정되지 않았어요.' }, 501);
@@ -305,12 +355,12 @@ async function handleStt({ request, env }) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
     if (pathname.startsWith('/api/')) {
       if (request.method !== 'POST') return json({ error: 'POST만 지원해요.' }, 405);
       if (pathname === '/api/cards') return handleCards({ request, env });
-      if (pathname === '/api/tts') return handleTts({ request, env });
+      if (pathname === '/api/tts') return handleTts({ request, env, ctx });
       if (pathname === '/api/stt') return handleStt({ request, env });
       return json({ error: '없는 API예요.' }, 404);
     }
