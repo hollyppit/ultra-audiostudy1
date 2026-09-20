@@ -93,6 +93,9 @@
       if (this.cloud()) {
         const rows = arr.map((c, i) => ({ deck_id: deckId, position: start + i, ...c }));
         let { error } = await sb.from('cards').insert(rows);
+        if (error && rows.some((r) => r.kind === 'note')) {
+          throw new Error('오디오북을 저장하려면 Supabase SQL Editor에서 supabase-schema.sql을 다시 실행해 주세요. (' + error.message + ')');
+        }
         if (error) ({ error } = await sb.from('cards').insert(rows.map(({ position, ...rest }) => rest)));
         if (error) throw error;
         return;
@@ -187,7 +190,7 @@
   function renderDecks() {
     $('#deckSelect').innerHTML = state.decks.map((d) => `<option value="${esc(d.id)}" ${d.id === state.deckId ? 'selected' : ''}>${esc(d.title)}</option>`).join('');
     const deck = state.decks.find((d) => d.id === state.deckId);
-    $('#saveTarget').textContent = deck ? `만든 카드는 "${deck.title}" 폴더에 저장돼요.` : '';
+    $('#saveTarget').textContent = deck ? `만든 내용은 "${deck.title}" 폴더에 저장돼요.` : '';
   }
 
   async function loadCards() {
@@ -211,54 +214,124 @@
     return h;
   }
 
+  /* 만들기 방식: 'audiobook'(기본, 메모를 듣기 좋게 정리) | 'qa'(문제·정답 카드) */
+  let mode = localStorage.getItem('uas.mode') === 'qa' ? 'qa' : 'audiobook';
+
+  function setMode(m) {
+    mode = m;
+    try { localStorage.setItem('uas.mode', m); } catch { /* 저장 불가 환경 */ }
+    document.querySelectorAll('.seg [data-mode]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mode === m)));
+    const ab = m === 'audiobook';
+    $('#makeTitle').textContent = ab ? '메모를 오디오북으로 정리해요' : '메모를 카드로 바꿔요';
+    $('#makeSub').textContent = ab
+      ? '붙여넣은 메모를 듣기 좋은 문장으로 다듬어, 순서대로 읽어줘요.'
+      : '공부한 내용을 붙여넣으면 문제·정답·해설 카드가 만들어져요.';
+    $('#generate').textContent = ab ? '오디오북으로 정리' : '카드로 변환';
+    $('#memo').placeholder = ab
+      ? '공부한 내용을 그대로 붙여넣으세요.\n\n주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요.\nAI를 못 쓰는 환경에서는 문단 그대로 담겨요.'
+      : '공부한 내용을 그대로 붙여넣으세요.\n\nAI를 못 쓰는 환경에서는 한 줄에 하나씩\n질문 :: 정답 :: 해설(선택)\n형식으로 적어도 카드가 됩니다.';
+  }
+
+  // 메모를 문단 단위로 묶어 한 번에 5,000자 이하로 보냅니다. (AI 호출 한도 대응)
+  function chunkMemo(text, max = 5000) {
+    const paras = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    const out = [];
+    let cur = '';
+    for (let p of paras) {
+      while (p.length > max) { if (cur) { out.push(cur); cur = ''; } out.push(p.slice(0, max)); p = p.slice(max); }
+      if (cur && (cur + '\n\n' + p).length > max) { out.push(cur); cur = p; } else cur = cur ? cur + '\n\n' + p : p;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  // AI를 못 쓸 때: 빈 줄로 나뉜 덩어리를 그대로 한 항목씩 (기호만 정리)
+  function parseAudiobook(text) {
+    const clean = (s) => s.replace(/^[\s#>*•\-·▶■●○]+/gm, '').replace(/\s*\n\s*/g, ' ').trim();
+    const paras = text.split(/\n{2,}/).map(clean).filter(Boolean);
+    const list = paras.length > 1 ? paras : text.split('\n').map(clean).filter(Boolean);
+    return list.map((body) => ({ kind: 'note', question: '', answer: body, explanation: '' }));
+  }
+
+  async function callCards(text, m) {
+    const res = await fetch('/api/cards', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text, mode: m }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
+    return j.cards;
+  }
+
   async function generate() {
     stopDictation();
     const text = $('#memo').value.trim();
     if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
     const btn = $('#generate');
-    btn.disabled = true; btn.textContent = '변환 중…';
+    const idleLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = mode === 'audiobook' ? '정리 중…' : '변환 중…';
     try {
-      const res = await fetch('/api/cards', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text }) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
-      state.draft = j.cards;
-    } catch (e) {
-      const parsed = parseManual(text);
-      if (parsed.length) {
-        state.draft = parsed;
-        toast('AI 변환을 쓸 수 없어 구분자 방식으로 변환했어요. (' + e.message + ')');
+      if (mode === 'audiobook') {
+        try {
+          const parts = chunkMemo(text);
+          const all = [];
+          for (let i = 0; i < parts.length; i++) {
+            if (parts.length > 1) btn.textContent = `정리 중… ${i + 1} / ${parts.length}`;
+            all.push(...await callCards(parts[i], 'audiobook'));
+          }
+          state.draft = all;
+        } catch (e) {
+          state.draft = parseAudiobook(text);
+          toast('AI 정리를 쓸 수 없어 메모를 문단 그대로 담았어요. (' + e.message + ')');
+        }
       } else {
-        toast('AI 변환 실패: ' + e.message + ' — "질문 :: 정답" 형식으로 적으면 바로 변환돼요.');
+        try {
+          state.draft = await callCards(text, 'qa');
+        } catch (e) {
+          const parsed = parseManual(text);
+          if (parsed.length) {
+            state.draft = parsed;
+            toast('AI 변환을 쓸 수 없어 구분자 방식으로 변환했어요. (' + e.message + ')');
+          } else {
+            toast('AI 변환 실패: ' + e.message + ' — "질문 :: 정답" 형식으로 적으면 바로 변환돼요.');
+          }
+        }
       }
     } finally {
-      btn.disabled = false; btn.textContent = '카드로 변환';
+      btn.disabled = false; btn.textContent = idleLabel;
     }
     renderDraft();
   }
 
   function renderDraft() {
     const n = state.draft.length;
+    const notes = n > 0 && state.draft[0].kind === 'note';
     $('#draft').innerHTML = n
-      ? state.draft.map((c, i) => `
-        <article class="draft-card">
-          <label>문제<textarea data-i="${i}" data-k="question" rows="2">${esc(c.question)}</textarea></label>
-          <label>정답<textarea data-i="${i}" data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
-          <label>해설<textarea data-i="${i}" data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>
-          <button class="link danger" data-del="${i}">이 카드 빼기</button>
-        </article>`).join('') + `<div class="row"><button id="saveDraft" class="primary">카드 ${n}장 저장</button><span class="hint">틀린 내용이 없는지 확인했나요?</span></div>`
+      ? state.draft.map((c, i) => c.kind === 'note'
+        ? `<article class="draft-card">
+            <label>제목 <span class="opt">(선택)</span><textarea data-i="${i}" data-k="question" rows="1">${esc(c.question)}</textarea></label>
+            <label>본문 <span class="opt">(이 내용을 읽어줘요)</span><textarea data-i="${i}" data-k="answer" rows="5">${esc(c.answer)}</textarea></label>
+            <button class="link danger" data-del="${i}">이 항목 빼기</button>
+          </article>`
+        : `<article class="draft-card">
+            <label>문제<textarea data-i="${i}" data-k="question" rows="2">${esc(c.question)}</textarea></label>
+            <label>정답<textarea data-i="${i}" data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
+            <label>해설<textarea data-i="${i}" data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>
+            <button class="link danger" data-del="${i}">이 카드 빼기</button>
+          </article>`).join('')
+        + `<div class="row"><button id="saveDraft" class="primary">${notes ? `오디오북 ${n}개 저장` : `카드 ${n}장 저장`}</button><span class="hint">${notes ? '읽을 내용에 틀린 곳이 없는지 확인했나요?' : '틀린 내용이 없는지 확인했나요?'}</span></div>`
       : '';
   }
 
   async function saveDraft() {
     const cards = state.draft
-      .map((c) => ({ question: (c.question || '').trim(), answer: (c.answer || '').trim(), explanation: (c.explanation || '').trim() }))
-      .filter((c) => c.question && c.answer);
-    if (!cards.length) return toast('저장할 카드가 없어요.');
+      .map((c) => c.kind === 'note'
+        ? { kind: 'note', question: (c.question || '').trim(), answer: (c.answer || '').trim(), explanation: '' }
+        : { question: (c.question || '').trim(), answer: (c.answer || '').trim(), explanation: (c.explanation || '').trim() })
+      .filter((c) => (c.kind === 'note' ? c.answer : c.question && c.answer));
+    if (!cards.length) return toast('저장할 내용이 없어요.');
     try {
       await db.addCards(state.deckId, cards, state.cards.length);
       state.draft = []; $('#memo').value = ''; renderDraft();
       await loadCards();
-      toast(cards.length + '장 저장했어요.');
+      toast(cards.length + '개 저장했어요.');
       showView('listen');
     } catch (e) { toast('저장 실패: ' + (e.message || e)); }
   }
@@ -457,20 +530,25 @@
   function renderManage() {
     const deck = state.decks.find((d) => d.id === state.deckId);
     $('#folderName').textContent = deck ? deck.title : '';
-    $('#folderMeta').textContent = `카드 ${state.cards.length}장`;
+    const nNotes = state.cards.filter((c) => c.kind === 'note').length;
+    const nQa = state.cards.length - nNotes;
+    $('#folderMeta').textContent = [nNotes && `오디오북 ${nNotes}개`, nQa && `문제 카드 ${nQa}장`].filter(Boolean).join(' · ') || '비어 있어요';
     $('#manageHint').hidden = state.cards.length < 2;
 
     const el = $('#cardList');
     if (!state.cards.length) {
-      el.innerHTML = '<p class="empty">이 폴더에는 아직 카드가 없어요.<br>"카드 만들기"에서 메모를 붙여넣어 보세요.</p>';
+      el.innerHTML = '<p class="empty">이 폴더에는 아직 내용이 없어요.<br>"만들기"에서 메모를 붙여넣어 보세요.</p>';
       return;
     }
     el.innerHTML = state.cards.map((c) => c.id === editId
       ? `<article class="item editing" data-id="${esc(c.id)}">
           <div class="body">
-            <label>문제<textarea data-k="question" rows="2">${esc(c.question)}</textarea></label>
-            <label>정답<textarea data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
-            <label>해설<textarea data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>
+            ${c.kind === 'note'
+              ? `<label>제목 <span class="opt">(선택)</span><textarea data-k="question" rows="1">${esc(c.question)}</textarea></label>
+                 <label>본문<textarea data-k="answer" rows="6">${esc(c.answer)}</textarea></label>`
+              : `<label>문제<textarea data-k="question" rows="2">${esc(c.question)}</textarea></label>
+                 <label>정답<textarea data-k="answer" rows="2">${esc(c.answer)}</textarea></label>
+                 <label>해설<textarea data-k="explanation" rows="2">${esc(c.explanation)}</textarea></label>`}
             <div class="row">
               <button class="primary" data-act="save">저장</button>
               <button class="link" data-act="cancel">취소</button>
@@ -482,11 +560,11 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
           </button>
           <div class="body">
-            <b>${esc(c.question)}</b>
-            <span class="ans">${esc(c.answer)}</span>
-            ${c.explanation ? `<span class="exp">${esc(c.explanation)}</span>` : ''}
+            ${c.kind === 'note'
+              ? `${c.question ? `<b>${esc(c.question)}</b>` : ''}<span class="txt">${esc(c.answer)}</span>`
+              : `<b>${esc(c.question)}</b><span class="ans">${esc(c.answer)}</span>${c.explanation ? `<span class="exp">${esc(c.explanation)}</span>` : ''}`}
             <div class="foot">
-              <span>${c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}</span>
+              <span>${c.kind === 'note' ? '<span class="tag">오디오북</span>' : c.wrong_count ? `<span class="badge">헷갈림 ${c.wrong_count}</span>` : ''}</span>
               <span class="acts">
                 <button class="link" data-act="edit">편집</button>
                 <button class="link danger" data-act="del">삭제</button>
@@ -499,9 +577,12 @@
   async function saveEdit(id, itemEl) {
     const card = state.cards.find((c) => c.id === id);
     if (!card) return;
-    const val = (k) => itemEl.querySelector(`[data-k="${k}"]`).value.trim();
-    const patch = { question: val('question'), answer: val('answer'), explanation: val('explanation') };
-    if (!patch.question || !patch.answer) return toast('문제와 정답은 비워둘 수 없어요.');
+    const val = (k) => (itemEl.querySelector(`[data-k="${k}"]`)?.value || '').trim();
+    const note = card.kind === 'note';
+    const patch = note
+      ? { question: val('question'), answer: val('answer') }
+      : { question: val('question'), answer: val('answer'), explanation: val('explanation') };
+    if (note ? !patch.answer : !patch.question || !patch.answer) return toast(note ? '본문은 비워둘 수 없어요.' : '문제와 정답은 비워둘 수 없어요.');
     try {
       await db.patchCard(id, patch);
       Object.assign(card, patch); // 재생 큐가 같은 객체를 참조하므로 함께 갱신됨
@@ -587,14 +668,40 @@
   /* ---------- 재생 큐 ---------- */
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
+  // 오디오북(note)은 섞지 않고 저장된 순서대로 먼저, 그 뒤에 문제 카드(설정에 따라 섞음)
   function buildQueue() {
+    const notes = state.cards.filter((c) => c.kind === 'note');
     const q = [];
     for (const c of state.cards) {
+      if (c.kind === 'note') continue;
       const n = settings.weak ? 1 + Math.min(c.wrong_count || 0, 3) : 1;
       for (let i = 0; i < n; i++) q.push(c);
     }
-    state.queue = settings.shuffle ? shuffle(q) : q;
+    state.queue = [...notes, ...(settings.shuffle ? shuffle(q) : q)];
     state.idx = 0;
+  }
+
+  // 긴 본문은 브라우저 음성이 중간에 끊기는 문제가 있어 문장 단위(약 180자)로 나눠 읽습니다.
+  function splitSpeech(text, max = 180) {
+    const parts = [];
+    for (const para of String(text).split(/\n+/)) {
+      const sentences = para.replace(/([.!?。！？…]+)\s+/g, '$1\n').split('\n');
+      let cur = '';
+      for (let s of sentences) {
+        s = s.trim();
+        if (!s) continue;
+        while (s.length > max) {
+          let cut = s.lastIndexOf(' ', max);
+          if (cut < max / 2) cut = max;
+          if (cur) { parts.push(cur); cur = ''; }
+          parts.push(s.slice(0, cut).trim());
+          s = s.slice(cut).trim();
+        }
+        if (cur && (cur + ' ' + s).length > max) { parts.push(cur); cur = s; } else cur = cur ? cur + ' ' + s : s;
+      }
+      if (cur) parts.push(cur);
+    }
+    return parts.filter(Boolean);
   }
 
   /* ---------- 음성 ---------- */
@@ -662,8 +769,21 @@
     await speakBrowser(text);
   }
 
+  async function speakLong(text, token) {
+    const chunks = splitSpeech(text);
+    for (let i = 0; i < chunks.length; i++) {
+      if (token !== runToken) return;
+      if (settings.engine === 'cloud' && !cloudBroken && chunks[i + 1]) audioUrl(chunks[i + 1]).catch(() => {}); // 다음 조각 미리 받기
+      await say(chunks[i], token);
+    }
+  }
+
   function prefetch(c) {
     if (settings.engine !== 'cloud' || cloudBroken) return;
+    if (c.kind === 'note') {
+      [c.question, ...splitSpeech(c.answer).slice(0, 2)].forEach((t) => t && audioUrl(t).catch(() => {}));
+      return;
+    }
     [c.answer, settings.explain ? c.explanation : ''].forEach((t) => t && audioUrl(t).catch(() => {}));
   }
 
@@ -681,14 +801,19 @@
     $('#counter').textContent = total ? `${Math.min(state.idx + 1, total)} / ${total}` : '';
     $('#progress').style.width = total ? ((state.idx + (state.playing ? 0.5 : 0)) / total) * 100 + '%' : '0';
     const q = $('#qText'), a = $('#aText');
+    const note = !!card && card.kind === 'note';
+    $('#player').dataset.kind = note ? 'note' : 'qa';
     if (!card) {
-      q.textContent = total ? '재생 버튼을 누르면 문제부터 읽어줘요.' : '카드를 만들면 여기에서 문제가 나와요.';
+      q.hidden = false;
+      q.textContent = total ? '재생 버튼을 누르면 순서대로 읽어줘요.' : '메모를 오디오북이나 카드로 만들면 여기에서 재생돼요.';
       a.hidden = true;
       return;
     }
+    q.hidden = !card.question;
     q.textContent = card.question;
     a.textContent = card.answer;
-    a.hidden = !showAnswer;
+    a.hidden = note ? false : !showAnswer;
+    if (note) a.scrollTop = 0;
   }
 
   function setPlayIcon() {
@@ -705,6 +830,19 @@
     state.playing = true; setPlayIcon(); updateMedia();
     while (token === runToken && state.idx < state.queue.length) {
       const c = state.queue[state.idx];
+      if (c.kind === 'note') {
+        renderPlayer(c, true);
+        prefetch(c);
+        setPhase('오디오북');
+        if (c.question) {
+          await say(c.question, token); if (token !== runToken) return;
+          await wait(500); if (token !== runToken) return;
+        }
+        await speakLong(c.answer, token); if (token !== runToken) return;
+        await wait(1200); if (token !== runToken) return;
+        state.idx++;
+        continue;
+      }
       renderPlayer(c, false);
       prefetch(c);
       setPhase('문제');
@@ -830,6 +968,8 @@
     };
 
     $('#goMake').onclick = () => showView('make');
+    document.querySelectorAll('.seg [data-mode]').forEach((b) => { b.onclick = () => setMode(b.dataset.mode); });
+    setMode(mode);
     initDictation();
     initStt();
     $('#generate').onclick = generate;

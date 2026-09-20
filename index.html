@@ -39,11 +39,11 @@
       </button>
       <button role="tab" data-view="make" aria-selected="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-        <span>카드 만들기</span>
+        <span>만들기</span>
       </button>
       <button role="tab" data-view="manage" aria-selected="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/></svg>
-        <span>카드 관리</span>
+        <span>관리</span>
       </button>
     </nav>
 
@@ -51,11 +51,11 @@
     <section id="view-listen">
       <div id="intro" class="intro" hidden>
         <h2>내가 쓴 메모로, 귀로 하는 공부</h2>
-        <p>공부한 메모를 붙여넣기만 하면 문제·정답·해설을 읽어주는 오디오 스터디가 만들어져요. 이동 중에도, 눈을 감고도 복습하세요.</p>
+        <p>공부한 메모를 붙여넣기만 하면 오디오북처럼 읽어줘요. 이동 중에도, 눈을 감고도 복습하세요. 원하면 문제·정답 카드로도 만들 수 있어요.</p>
         <ol>
-          <li><b>1</b><span>메모 붙여넣기<small>노트, 요약본 아무거나</small></span></li>
-          <li><b>2</b><span>카드 자동 생성<small>AI가 문제와 정답으로 정리</small></span></li>
-          <li><b>3</b><span>재생 버튼 누르고 듣기<small>문제 → 생각 → 정답 순서로</small></span></li>
+          <li><b>1</b><span>메모 붙여넣기<small>노트, 요약본 아무거나 (말로 입력도 가능)</small></span></li>
+          <li><b>2</b><span>오디오북 또는 카드로 만들기<small>AI가 듣기 좋게 다듬어요</small></span></li>
+          <li><b>3</b><span>재생 버튼 누르고 듣기<small>오디오북은 순서대로, 카드는 문제 → 정답 순서로</small></span></li>
         </ol>
       </div>
 
@@ -75,7 +75,7 @@
         <div class="stage">
           <p id="qText" class="q">카드를 만들면 여기에서 문제가 나와요.</p>
           <p id="aText" class="a" hidden></p>
-          <button id="goMake" class="cta" hidden>내 메모로 첫 카드 만들기</button>
+          <button id="goMake" class="cta" hidden>내 메모로 오디오북 만들기</button>
         </div>
 
         <div class="wave" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
@@ -129,8 +129,12 @@
 
     <!-- 카드 만들기 -->
     <section id="view-make" hidden>
-      <h2 class="sec-title">메모를 카드로 바꿔요</h2>
-      <p class="sec-sub">공부한 내용을 붙여넣으면 문제·정답·해설 카드가 만들어져요.</p>
+      <h2 id="makeTitle" class="sec-title">메모를 오디오북으로 정리해요</h2>
+      <p id="makeSub" class="sec-sub">붙여넣은 메모를 듣기 좋은 문장으로 다듬어, 순서대로 읽어줘요.</p>
+      <div class="seg" role="radiogroup" aria-label="만들기 방식">
+        <button type="button" role="radio" data-mode="audiobook" aria-checked="true"><b>오디오북</b><small>메모를 그대로 들어요</small></button>
+        <button type="button" role="radio" data-mode="qa" aria-checked="false"><b>문제·정답 카드</b><small>퀴즈처럼 외워요</small></button>
+      </div>
       <p id="saveTarget" class="save-target"></p>
       <label class="field"><span class="sr">메모 붙여넣기</span>
         <textarea id="memo" rows="9" placeholder="공부한 내용을 그대로 붙여넣으세요.&#10;&#10;AI를 못 쓰는 환경에서는 한 줄에 하나씩&#10;질문 :: 정답 :: 해설(선택)&#10;형식으로 적어도 카드가 됩니다."></textarea>
@@ -149,7 +153,7 @@
       </div>
       <p id="sttStatus" class="hint stt-status" aria-live="polite" hidden></p>
       <div class="row">
-        <button id="generate" class="primary">카드로 변환</button>
+        <button id="generate" class="primary">오디오북으로 정리</button>
         <span class="hint">변환 후 내용을 꼭 확인하고 저장하세요.</span>
       </div>
       <div id="draft" class="draft"></div>

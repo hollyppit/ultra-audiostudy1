@@ -25,11 +25,15 @@ create table if not exists public.cards (
   explanation text not null default '',
   wrong_count integer not null default 0 check (wrong_count >= 0),
   position    integer,
+  kind        text not null default 'qa' check (kind in ('qa', 'note')),  -- qa: 문제·정답 카드, note: 오디오북 항목
   created_at  timestamptz not null default now()
 );
 
 -- 이미 cards 테이블이 있던 경우를 위한 보강
 alter table public.cards add column if not exists position integer;
+alter table public.cards add column if not exists kind text not null default 'qa';
+alter table public.cards drop constraint if exists cards_kind_check;
+alter table public.cards add constraint cards_kind_check check (kind in ('qa', 'note'));
 
 create index if not exists decks_user_created_idx on public.decks (user_id, created_at);
 create index if not exists cards_deck_position_idx on public.cards (deck_id, position, created_at);

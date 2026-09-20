@@ -35,15 +35,30 @@ const SYSTEM = `당신은 자격증 시험 준비용 "오디오 학습 카드"�
 - 응답은 JSON 배열만 출력하세요. 설명, 코드블록 표시는 금지입니다.
 형식: [{"question":"...","answer":"...","explanation":"..."}]`;
 
+// 오디오북 모드: 문제/정답으로 쪼개지 않고, 메모를 순서대로 "듣기 좋은 원고"로 다듬습니다.
+const SYSTEM_AUDIOBOOK = `당신은 학습 메모를 "귀로 듣는 오디오북 원고"로 정리하는 도우미입니다.
+
+규칙:
+- 메모에 있는 내용만 사용하세요. 메모에 없는 사실을 추가하거나 추측하지 마세요.
+- 내용을 빼지 마세요. 중요도가 낮아 보여도 버리지 말고 정리해서 담으세요.
+- 메모의 순서를 유지하세요. 주제가 바뀌는 곳마다 항목을 나누고, 항목마다 짧은 제목(20자 이내)과 본문을 쓰세요.
+- 본문은 소리 내어 읽었을 때 자연스러운 문장으로 다듬으세요. 한 항목은 1~6문장, 문장은 짧게 쓰세요.
+- #, -, *, 표 기호, 번호 기호 같은 표시는 지우고 문장으로 풀어 쓰세요. "위 표", "다음 그림" 같은 표현은 쓰지 마세요.
+- 숫자와 단위는 귀로 듣기 쉽게 한국어로 쓰세요. (예: 2.5m → 2.5미터, 80mm → 80밀리미터, 6° → 6도) 숫자 값 자체는 절대 바꾸지 마세요.
+- 응답은 JSON 배열만 출력하세요. 설명, 코드블록 표시는 금지입니다.
+형식: [{"title":"...","body":"..."}]`;
+
 async function handleCards({ request, env }) {
   const auth = await requireUser(request, env);
   if (!auth.ok) return json({ error: auth.reason }, 401);
   if (!env.ANTHROPIC_API_KEY) return json({ error: '서버에 ANTHROPIC_API_KEY가 설정되지 않았어요.' }, 501);
 
-  let text;
-  try { ({ text } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  let text, mode;
+  try { ({ text, mode } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  const audiobook = mode === 'audiobook';
   if (!text || typeof text !== 'string') return json({ error: '메모가 비어 있어요.' }, 400);
-  if (text.length > 12000) return json({ error: '메모가 너무 길어요. 12,000자 이하로 나눠서 넣어 주세요.' }, 400);
+  const maxLen = audiobook ? 6000 : 12000;
+  if (text.length > maxLen) return json({ error: `메모가 너무 길어요. ${maxLen.toLocaleString('en-US')}자 이하로 나눠서 넣어 주세요.` }, 400);
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -54,8 +69,8 @@ async function handleCards({ request, env }) {
     },
     body: JSON.stringify({
       model: env.CARD_MODEL || 'claude-sonnet-5',
-      max_tokens: 4000,
-      system: SYSTEM,
+      max_tokens: audiobook ? 8000 : 4000,
+      system: audiobook ? SYSTEM_AUDIOBOOK : SYSTEM,
       messages: [{ role: 'user', content: text }],
     }),
   });
@@ -70,6 +85,13 @@ async function handleCards({ request, env }) {
   let cards;
   try { cards = JSON.parse(raw); } catch { return json({ error: 'AI 응답을 해석하지 못했어요. 다시 시도해 주세요.' }, 502); }
   if (!Array.isArray(cards)) return json({ error: 'AI 응답 형식이 올바르지 않아요.' }, 502);
+
+  if (audiobook) {
+    const notes = cards
+      .filter((c) => c && c.body)
+      .map((c) => ({ kind: 'note', question: String(c.title || ''), answer: String(c.body), explanation: '' }));
+    return json({ cards: notes });
+  }
 
   cards = cards
     .filter((c) => c && c.question && c.answer)
