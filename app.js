@@ -950,7 +950,7 @@
     const target = $('#moveTarget').value;
     if (!target || !selected.size) return;
     const deck = state.decks.find((d) => d.id === target);
-    const ids = state.cards.filter((c) => selected.has(c.id)).map((c) => c.id); // 지금 보이는 순서 그대로 옮김
+    const ids = sortedCards().filter((c) => selected.has(c.id)).map((c) => c.id); // 지금 보이는 순서 그대로 옮김
     if (state.playing) stop();
     const btn = $('#selMove');
     btn.disabled = true; btn.textContent = '옮기는 중…';
@@ -966,6 +966,22 @@
     }
   }
 
+  /* 저장된 카드 정렬: custom = 내가 정한 순서(끌어서 바꾼 순서), old = 오래된순, new = 최신순.
+     목록 표시와 "목록 순서대로" 재생(buildQueue)이 같은 순서를 씁니다. (DB에 저장되는 순서 position 은 custom 그대로)
+     같은 메모에서 한꺼번에 만든 카드는 만든 시각이 같을 수 있어서, 같으면 저장된 순서로 가립니다. */
+  const SORTS = ['custom', 'old', 'new'];
+  let sortMode = SORTS.includes(localStorage.getItem('uas.sort')) ? localStorage.getItem('uas.sort') : 'custom';
+
+  function sortedCards() {
+    if (sortMode === 'custom') return state.cards;
+    const idx = new Map(state.cards.map((c, i) => [c.id, i]));
+    const asc = [...state.cards].sort((a, b) => {
+      const t = (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0);
+      return t || idx.get(a.id) - idx.get(b.id);
+    });
+    return sortMode === 'new' ? asc.reverse() : asc;
+  }
+
   function renderManage() {
     const deck = state.decks.find((d) => d.id === state.deckId);
     $('#folderName').textContent = deck ? deck.title : '';
@@ -973,6 +989,11 @@
     const nQa = state.cards.length - nNotes;
     $('#folderMeta').textContent = [nNotes && `오디오북 ${nNotes}개`, nQa && `문제 카드 ${nQa}장`].filter(Boolean).join(' · ') || '비어 있어요';
     $('#manageHint').hidden = state.cards.length < 2 || selMode;
+    $('#manageHint').textContent = sortMode === 'custom'
+      ? '왼쪽 손잡이를 끌어서 순서를 바꿀 수 있어요. 재생 순서를 "목록 순서대로"로 하면 이 순서대로 들려요.'
+      : '최신순·오래된순으로 보는 중이라 순서를 끌어서 바꿀 수 없어요. "내 순서"로 바꾸면 끌어서 정렬할 수 있어요. 재생 순서를 "목록 순서대로"로 하면 지금 보이는 순서대로 들려요.';
+    $('#sortBar').hidden = state.cards.length < 2;
+    $('#sortMode').value = sortMode;
     $('#selToggle').hidden = !state.cards.length;
     for (const id of [...selected]) if (!state.cards.some((c) => c.id === id)) selected.delete(id); // 사라진 카드는 선택에서 제외
     if (!state.cards.length) selMode = false;
@@ -983,7 +1004,7 @@
       el.innerHTML = '<p class="empty">이 폴더에는 아직 내용이 없어요.<br>"만들기"에서 메모를 붙여넣어 보세요.</p>';
       return;
     }
-    el.innerHTML = state.cards.map((c) => c.id === editId
+    el.innerHTML = sortedCards().map((c) => c.id === editId
       ? `<article class="item editing" data-id="${esc(c.id)}">
           <div class="body">
             ${c.kind === 'note'
@@ -1000,10 +1021,10 @@
             </div>
           </div>
         </article>`
-      : `<article class="item${selMode ? ' selectable' + (selected.has(c.id) ? ' selected' : '') : ''}" data-id="${esc(c.id)}"${selMode ? ` role="checkbox" aria-checked="${selected.has(c.id)}" tabindex="0"` : ''}>
+      : `<article class="item${selMode ? ' selectable' + (selected.has(c.id) ? ' selected' : '') : sortMode === 'custom' ? '' : ' no-grip'}" data-id="${esc(c.id)}"${selMode ? ` role="checkbox" aria-checked="${selected.has(c.id)}" tabindex="0"` : ''}>
           ${selMode
             ? '<span class="pick" aria-hidden="true"></span>'
-            : `<button class="grip" tabindex="0" aria-label="순서 이동: 끌거나 위아래 화살표 키" title="끌어서 순서 바꾸기">
+            : sortMode !== 'custom' ? '' : `<button class="grip" tabindex="0" aria-label="순서 이동: 끌거나 위아래 화살표 키" title="끌어서 순서 바꾸기">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
               </button>`}
           <div class="body">
@@ -1134,9 +1155,9 @@
   /* ---------- 재생 큐 ---------- */
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-  // 재생 순서: 섞어서(기본) / 저장된 순서대로. 오디오북 항목과 문제 카드 모두에 똑같이 적용됩니다.
+  // 재생 순서: 섞어서(기본) / 목록 순서대로. 오디오북 항목과 문제 카드 모두에 똑같이 적용됩니다.
   // - 섞어서: 헷갈린 카드는 횟수만큼 더 넣고 전부 섞음
-  // - 순서대로: 저장된 순서로 한 바퀴, 그 뒤에 헷갈린 카드만 다시 (많이 헷갈릴수록 최대 3번까지 추가 바퀴에 포함)
+  // - 순서대로: 관리 탭에서 고른 정렬(내 순서/최신순/오래된순) 그대로 한 바퀴, 그 뒤에 헷갈린 카드만 다시 (많이 헷갈릴수록 최대 3번까지 추가 바퀴에 포함)
   function buildQueue() {
     const weak = (c) => (settings.weak && c.kind !== 'note' ? Math.min(c.wrong_count || 0, 3) : 0);
     if (settings.shuffle) {
@@ -1144,8 +1165,9 @@
       for (const c of state.cards) for (let i = 0; i <= weak(c); i++) q.push(c);
       state.queue = shuffle(q);
     } else {
-      const q = [...state.cards];
-      for (let r = 1; r <= 3; r++) q.push(...state.cards.filter((c) => weak(c) >= r));
+      const ordered = sortedCards();
+      const q = [...ordered];
+      for (let r = 1; r <= 3; r++) q.push(...ordered.filter((c) => weak(c) >= r));
       state.queue = q;
     }
     state.idx = 0;
@@ -1600,6 +1622,12 @@
       const it = e.target.closest('.item.selectable');
       if (it) { e.preventDefault(); toggleSel(it.dataset.id); }
     });
+    $('#sortMode').onchange = (e) => {
+      sortMode = SORTS.includes(e.target.value) ? e.target.value : 'custom';
+      try { localStorage.setItem('uas.sort', sortMode); } catch { /* 저장 불가 환경 */ }
+      stop(); buildQueue(); renderPlayer(null, false); // "순서대로" 재생은 고른 정렬을 따르므로 재생 목록도 다시 만듭니다
+      renderManage();
+    };
     $('#selToggle').onclick = () => (selMode ? exitSel() : enterSel());
     $('#selCancel').onclick = exitSel;
     $('#selAll').onclick = () => {

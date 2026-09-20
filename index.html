@@ -172,7 +172,7 @@
           <label>재생 순서
             <select id="sOrder">
               <option value="shuffle">섞어서 재생 (기본)</option>
-              <option value="seq">저장된 순서대로 재생</option>
+              <option value="seq">목록 순서대로 재생 (정렬 따라감)</option>
             </select>
           </label>
           <label class="check"><input id="sWeak" type="checkbox"><span>헷갈린 카드를 더 자주</span></label>
@@ -229,7 +229,15 @@
         <button id="selToggle" type="button" class="ghost">카드 옮기기</button>
         <span class="hint">지금 선택한 목소리로 만들어 둬요. 이미 만든 문장은 건너뛰어요.</span>
       </div>
-      <p id="manageHint" class="hint drag-hint" hidden>왼쪽 손잡이를 끌어서 순서를 바꿀 수 있어요. 재생 순서를 "저장된 순서대로"로 하면 이 순서대로 들려요.</p>
+      <div id="sortBar" class="sortbar" hidden>
+        <label for="sortMode">정렬</label>
+        <select id="sortMode">
+          <option value="custom">내 순서 (끌어서 정렬)</option>
+          <option value="new">최신순</option>
+          <option value="old">오래된순</option>
+        </select>
+      </div>
+      <p id="manageHint" class="hint drag-hint" hidden>왼쪽 손잡이를 끌어서 순서를 바꿀 수 있어요. 재생 순서를 "목록 순서대로"로 하면 이 순서대로 들려요.</p>
       <div id="cardList" class="cardlist"></div>
       <button id="delDeck" class="link danger">이 폴더 삭제</button>
     </section>

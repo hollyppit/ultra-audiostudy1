@@ -364,6 +364,9 @@ body.selecting main { padding-bottom: 210px; }
 .folder-head .ghost { flex: none; }
 .save-target { margin: -6px 0 12px; font-size: 13px; font-weight: 700; color: var(--brand-text); }
 .drag-hint { margin: 0 0 12px; }
+.sortbar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.sortbar select { padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); font-weight: 700; }
+.item.no-grip { padding-left: 14px; }
 
 .cardlist { display: grid; gap: 10px; margin-bottom: 20px; }
 .item { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 12px 14px 12px 6px; display: flex; gap: 6px; align-items: stretch; transition: box-shadow .15s, transform .15s; }
