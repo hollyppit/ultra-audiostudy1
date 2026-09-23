@@ -210,6 +210,15 @@ main { max-width: 720px; margin: 0 auto; padding: 8px 20px calc(110px + env(safe
 }
 .order button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .order button[aria-checked="true"] { background: #fff; color: #1d25b8; }
+.order.repeat { margin-top: 10px; flex-wrap: wrap; max-width: 100%; }
+.order.repeat button { padding: 7px 12px; }
+@media (max-width: 420px) { .order.repeat { gap: 2px; } .order.repeat button { padding: 7px 11px; } .order.repeat button svg { display: none; } }
+.laps { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 10px; font-size: 13px; font-weight: 700; color: rgba(255,255,255,.85); }
+.laps[hidden] { display: none; }
+.laps b { font-size: 15px; font-variant-numeric: tabular-nums; margin-right: 2px; color: #fff; }
+.laps button { width: 32px; height: 32px; border: 0; border-radius: 50%; background: rgba(255,255,255,.14); color: #fff; font-size: 18px; font-weight: 700; line-height: 1; padding: 0; }
+.laps button:hover { background: rgba(255,255,255,.24); }
+.laps button:disabled { opacity: .35; }
 .marks { display: flex; gap: 10px; margin-top: 22px; }
 .mark {
   flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 10px; border-radius: 16px;
@@ -323,6 +332,21 @@ body.selecting main { padding-bottom: 210px; }
   border: 2px solid var(--brand-text); border-right-color: transparent; animation: spin .8s linear infinite; vertical-align: -1px;
 }
 .warm-row { margin: 0 0 12px; }
+.export { position: relative; }
+.export summary { list-style: none; cursor: pointer; }
+.export summary::-webkit-details-marker { display: none; }
+.export summary svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.export .menu {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 230px; padding: 6px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow);
+}
+.export .menu button {
+  display: grid; gap: 2px; width: 100%; padding: 10px 12px; border: 0; border-radius: 10px;
+  background: none; color: var(--ink); text-align: left;
+}
+.export .menu button:hover, .export .menu button:focus-visible { background: var(--brand-soft); }
+.export .menu small { color: var(--muted); font-size: 12px; }
+.export .menu button:disabled { opacity: .5; }
 .save-voice { display: grid; gap: 8px; margin: 14px 0 4px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
 .save-voice > label { font-weight: 700; font-size: 14px; }
 .save-voice .hint { margin: 0; }

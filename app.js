@@ -11,14 +11,14 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
 
-  const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, playing: false, saveVoice: null, memoMedia: [], memoUploading: false };
+  const state = { decks: [], deckId: null, cards: [], draft: [], queue: [], idx: 0, lap: 1, playing: false, saveVoice: null, memoMedia: [], memoUploading: false };
   // 설정 버전 2: 기본을 클라우드 음성 + OpenAI 코랄로 변경. 옛 버전에 저장된 engine/voice 만 새 기본값으로 바꾸고 나머지 설정은 유지합니다.
   const SETTINGS_VER = 2;
   const DEFAULT_VOICE = 'oa_coral';
   const savedSettings = safeJSON(localStorage.getItem('uas.settings'), {});
   if (savedSettings.ver !== SETTINGS_VER) { delete savedSettings.engine; delete savedSettings.voice; }
   const settings = Object.assign(
-    { engine: 'cloud', voice: DEFAULT_VOICE, warm: true, rate: 1, gap: 4, shuffle: true, weak: true, explain: true },
+    { engine: 'cloud', voice: DEFAULT_VOICE, warm: true, rate: 1, gap: 4, shuffle: true, repeat: 'off', laps: 3, weak: true, explain: true },
     savedSettings,
     { ver: SETTINGS_VER }
   );
@@ -995,6 +995,7 @@
     $('#sortBar').hidden = state.cards.length < 2;
     $('#sortMode').value = sortMode;
     $('#selToggle').hidden = !state.cards.length;
+    $('#exportMenu').hidden = !state.cards.length;
     for (const id of [...selected]) if (!state.cards.some((c) => c.id === id)) selected.delete(id); // 사라진 카드는 선택에서 제외
     if (!state.cards.length) selMode = false;
     updateSelBar();
@@ -1045,6 +1046,102 @@
     const cur = state.cards.find((c) => c.id === editId);
     const vs = el.querySelector('.editing [data-k="voice"]');
     if (cur && vs) vs.value = voiceExists(cur.voice) ? cur.voice : '';
+  }
+
+  /* ---------- 폴더 내보내기 (워드 / 텍스트) ---------- */
+  // 관리 탭에 보이는 순서(정렬 반영) 그대로 내보냅니다. 첨부 사진·영상은 파일에 넣지 않고 개수만 적어요.
+  const DOCX_SRC = 'https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.iife.min.js';
+  let docxLib;
+  function loadDocx() { // 1MB 가까운 라이브러리라 처음 내보낼 때만 받아옵니다.
+    if (window.docx) return Promise.resolve(window.docx);
+    docxLib = docxLib || new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = DOCX_SRC;
+      s.onload = () => (window.docx ? res(window.docx) : rej(new Error('docx 없음')));
+      s.onerror = () => { docxLib = null; rej(new Error('불러오기 실패')); };
+      document.head.appendChild(s);
+    });
+    return docxLib;
+  }
+  function exportInfo() {
+    const deck = state.decks.find((d) => d.id === state.deckId);
+    const title = (deck && deck.title) || '내 폴더';
+    const today = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
+    const file = (title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || '폴더') + '_' + today;
+    const lines = (t) => String(t || '').replace(/\r\n?/g, '\n').split('\n');
+    return { title, today, file, meta: $('#folderMeta').textContent, cards: sortedCards(), lines };
+  }
+  function downloadBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function exportTxt() {
+    const { title, today, file, meta, cards } = exportInfo();
+    const out = [title, `${meta} · ${today} 내보냄`, ''];
+    let n = 0;
+    for (const c of cards) {
+      out.push('────────────────────');
+      if (c.kind === 'note') {
+        if (c.question) out.push(`[${c.question}]`);
+        out.push(c.answer);
+      } else {
+        out.push(`문제 ${++n}. ${c.question}`, `정답: ${c.answer}`);
+        if (c.explanation) out.push(`해설: ${c.explanation}`);
+      }
+      if (c.media && c.media.length) out.push(`(첨부 ${c.media.length}개)`);
+      out.push('');
+    }
+    // BOM + CRLF: 오래된 윈도우 메모장에서도 한글이 깨지지 않게
+    downloadBlob(new Blob(['\ufeff' + out.join('\n').replace(/\r?\n/g, '\r\n')], { type: 'text/plain;charset=utf-8' }), file + '.txt');
+  }
+  async function exportDocx() {
+    const d = await loadDocx();
+    const { title, today, file, meta, cards, lines } = exportInfo();
+    const P = (children, opts = {}) => new d.Paragraph({ children, ...opts });
+    const T = (text, opts = {}) => new d.TextRun({ text, ...opts });
+    // 여러 줄 본문은 줄마다 문단으로 (빈 줄은 문단 간격으로 대신)
+    const body = (text, prefix) => lines(text).filter((l, i) => l.trim() || i === 0).map((l, i) =>
+      P([...(i === 0 && prefix ? [T(prefix, { bold: true })] : []), T(l)], { spacing: { after: 80 } }));
+    const kids = [
+      P([T(title)], { heading: d.HeadingLevel.TITLE }),
+      P([T(`${meta} · ${today} 내보냄`, { color: '62667F', size: 20 })], { spacing: { after: 240 } }),
+    ];
+    let n = 0;
+    for (const c of cards) {
+      if (c.kind === 'note') {
+        if (c.question) kids.push(P([T(c.question)], { heading: d.HeadingLevel.HEADING_2 }));
+        kids.push(...body(c.answer));
+      } else {
+        kids.push(P([T(`문제 ${++n}. `, { bold: true, color: '3A45F0' }), T(c.question, { bold: true })], { spacing: { before: 240, after: 80 }, keepNext: true }));
+        kids.push(...body(c.answer, '정답: '));
+        if (c.explanation) kids.push(...body(c.explanation, '해설: '));
+      }
+      if (c.media && c.media.length) kids.push(P([T(`(첨부 ${c.media.length}개)`, { color: '62667F', size: 18 })]));
+      if (c.kind === 'note') kids.push(P([], { spacing: { after: 120 } }));
+    }
+    const doc = new d.Document({
+      creator: '울트라 오디오 스터디',
+      title,
+      styles: { default: { document: { run: { font: '맑은 고딕', size: 22 } } } },
+      sections: [{ children: kids }],
+    });
+    downloadBlob(await d.Packer.toBlob(doc), file + '.docx');
+  }
+  async function exportDeck(fmt, btn) {
+    if (!state.cards.length) return toast('이 폴더에는 내보낼 내용이 없어요.');
+    btn.disabled = true;
+    try {
+      if (fmt === 'docx') await exportDocx(); else exportTxt();
+      $('#exportMenu').open = false;
+      toast('파일을 내려받았어요.');
+    } catch (e) {
+      toast(fmt === 'docx' ? '워드 파일을 만들지 못했어요. 인터넷 연결을 확인하거나 텍스트로 내보내 보세요.' : '파일을 만들지 못했어요.');
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function saveEdit(id, itemEl) {
@@ -1171,6 +1268,40 @@
       state.queue = q;
     }
     state.idx = 0;
+    state.lap = 1;
+  }
+
+  // 반복: off(한 바퀴) / one(지금 카드만 계속) / all(전체를 끝없이) / n(settings.laps 바퀴)
+  // 새 바퀴를 시작할 때마다 큐를 다시 만들어서, 섞어서 재생이면 바퀴마다 순서가 새로 섞입니다.
+  const REPEATS = ['off', 'one', 'all', 'n'];
+  const clampLaps = (n) => Math.max(2, Math.min(99, Math.round(Number(n)) || 3));
+  function renderRepeat() {
+    document.querySelectorAll('.order [data-repeat]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.repeat === settings.repeat)));
+    document.querySelectorAll('.rep-n').forEach((el) => { el.textContent = settings.laps; });
+    $('#lapVal').textContent = settings.laps;
+    $('#lapStep').hidden = settings.repeat !== 'n';
+    $('#lapMinus').disabled = settings.laps <= 2;
+    $('#lapPlus').disabled = settings.laps >= 99;
+    $('#sRepeat').value = settings.repeat;
+    $('#sLaps').value = settings.laps;
+  }
+  function setRepeat(r) { // 재생 중에도 끊지 않고 다음 카드부터 바로 적용
+    settings.repeat = REPEATS.includes(r) ? r : 'off';
+    persistSettings(); renderRepeat();
+    $('#counter').textContent = counterText();
+  }
+  function setLaps(n) {
+    settings.laps = clampLaps(n);
+    persistSettings(); renderRepeat();
+    $('#counter').textContent = counterText();
+  }
+  function counterText() {
+    const total = state.queue.length;
+    if (!total) return '';
+    const pos = `${Math.min(state.idx + 1, total)} / ${total}`;
+    if (settings.repeat === 'n') return `${pos} · ${Math.min(state.lap, settings.laps)}/${settings.laps}바퀴`;
+    if (settings.repeat === 'all' && state.lap > 1) return `${pos} · ${state.lap}바퀴째`;
+    return pos;
   }
 
   function setShuffle(on) {
@@ -1367,7 +1498,7 @@
     const total = state.queue.length;
     $('#goMake').hidden = total > 0;
     $('#intro').hidden = total > 0;
-    $('#counter').textContent = total ? `${Math.min(state.idx + 1, total)} / ${total}` : '';
+    $('#counter').textContent = counterText();
     $('#progress').style.width = total ? ((state.idx + (state.playing ? 0.5 : 0)) / total) * 100 + '%' : '0';
     const q = $('#qText'), a = $('#aText');
     const note = !!card && card.kind === 'note';
@@ -1406,6 +1537,17 @@
     if (!state.queue.length) return toast('먼저 카드를 만들어 주세요.');
     const token = ++runToken;
     state.playing = true; setPlayIcon(); updateMedia();
+    // 카드 하나를 다 읽은 뒤 다음 위치로. 더 재생할 게 없으면 false.
+    const advance = () => {
+      if (settings.repeat === 'one') return true;
+      if (++state.idx < state.queue.length) return true;
+      if (settings.repeat === 'all' || (settings.repeat === 'n' && state.lap < settings.laps)) {
+        const lap = state.lap + 1;
+        buildQueue(); state.lap = lap;
+        return state.queue.length > 0;
+      }
+      return false;
+    };
     while (token === runToken && state.idx < state.queue.length) {
       const c = state.queue[state.idx];
       const v = voiceOf(c);
@@ -1419,7 +1561,7 @@
         }
         await speakLong(c.answer, token, v); if (token !== runToken) return;
         await wait(1200); if (token !== runToken) return;
-        state.idx++;
+        if (!advance()) break;
         continue;
       }
       renderPlayer(c, false);
@@ -1439,11 +1581,12 @@
         await say(c.explanation, token, v); if (token !== runToken) return;
       }
       await wait(900); if (token !== runToken) return;
-      state.idx++;
+      if (!advance()) break;
     }
     if (token === runToken) {
-      state.playing = false; state.idx = 0; setPlayIcon();
-      setPhase('한 바퀴 끝났어요'); renderPlayer(null, false);
+      const laps = state.lap;
+      state.playing = false; state.idx = 0; state.lap = 1; setPlayIcon();
+      setPhase(laps > 1 ? `${laps}바퀴 끝났어요` : '한 바퀴 끝났어요'); renderPlayer(null, false);
     }
   }
 
@@ -1516,6 +1659,9 @@
     $('#sOrder').value = settings.shuffle ? 'shuffle' : 'seq';
     document.querySelectorAll('.order [data-order]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.order === (settings.shuffle ? 'shuffle' : 'seq'))));
     $('#sWeak').checked = settings.weak;
+    if (!REPEATS.includes(settings.repeat)) settings.repeat = 'off';
+    settings.laps = clampLaps(settings.laps);
+    renderRepeat();
     $('#sExplain').checked = settings.explain;
 
     const persist = () => localStorage.setItem('uas.settings', JSON.stringify(settings));
@@ -1529,6 +1675,11 @@
     $('#sGap').onchange = (e) => { settings.gap = Math.max(1, Math.min(20, Number(e.target.value) || 4)); persist(); };
     $('#sOrder').onchange = (e) => setShuffle(e.target.value === 'shuffle');
     document.querySelectorAll('.order [data-order]').forEach((b) => { b.onclick = () => setShuffle(b.dataset.order === 'shuffle'); });
+    document.querySelectorAll('.order [data-repeat]').forEach((b) => { b.onclick = () => setRepeat(b.dataset.repeat); });
+    $('#sRepeat').onchange = (e) => setRepeat(e.target.value);
+    $('#sLaps').onchange = (e) => setLaps(e.target.value);
+    $('#lapMinus').onclick = () => setLaps(settings.laps - 1);
+    $('#lapPlus').onclick = () => setLaps(settings.laps + 1);
     $('#sWeak').onchange = (e) => { settings.weak = e.target.checked; persist(); stop(); buildQueue(); renderPlayer(null, false); };
     $('#sExplain').onchange = (e) => { settings.explain = e.target.checked; persist(); };
     $('#sWarm').onchange = (e) => { settings.warm = e.target.checked; persist(); };
@@ -1629,6 +1780,8 @@
       renderManage();
     };
     $('#selToggle').onclick = () => (selMode ? exitSel() : enterSel());
+    document.querySelectorAll('[data-export]').forEach((b) => { b.onclick = () => exportDeck(b.dataset.export, b); });
+    document.addEventListener('click', (e) => { const m = $('#exportMenu'); if (m.open && !m.contains(e.target)) m.open = false; });
     $('#selCancel').onclick = exitSel;
     $('#selAll').onclick = () => {
       if (selected.size && selected.size === state.cards.length) selected.clear();
