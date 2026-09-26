@@ -221,7 +221,12 @@
         <button type="button" role="radio" data-mode="qa" aria-checked="false"><b>문제·정답 카드</b><small>퀴즈처럼 외워요</small></button>
       </div>
       <p id="saveTarget" class="save-target"></p>
-      <label class="field"><span class="sr">메모 붙여넣기</span>
+      <div id="qaForm" class="qa-form" hidden>
+        <label class="field"><span>문제</span><textarea id="qaQ" rows="2" placeholder="예) 대한민국의 수도는?"></textarea></label>
+        <label class="field"><span>정답</span><textarea id="qaA" rows="2" placeholder="예) 서울"></textarea></label>
+        <label class="field"><span>해설 <span class="opt">(선택)</span></span><textarea id="qaE" rows="2" placeholder="예) 1394년부터 수도예요."></textarea></label>
+      </div>
+      <label id="memoField" class="field"><span class="sr">메모 붙여넣기</span>
         <textarea id="memo" rows="9" placeholder="공부한 내용을 그대로 붙여넣으세요.&#10;&#10;주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요."></textarea>
       </label>
       <div class="mic-row">
@@ -238,10 +243,10 @@
       </div>
       <p id="sttStatus" class="hint stt-status" aria-live="polite" hidden></p>
       <div class="attach memo-attach" id="memoAttach"></div>
-      <p class="hint memo-attach-hint">사진·영상을 붙이면 이 메모로 만드는 <b>모든 카드</b>에 함께 붙어요. 만든 뒤 카드마다 빼거나 더 추가할 수 있어요.</p>
+      <p id="memoAttachHint" class="hint memo-attach-hint">사진·영상을 붙이면 이 메모로 만드는 <b>모든 카드</b>에 함께 붙어요. 만든 뒤 카드마다 빼거나 더 추가할 수 있어요.</p>
       <div class="row">
         <button id="generate" class="primary">오디오북으로 정리</button>
-        <span class="hint">변환 후 내용을 꼭 확인하고 저장하세요.</span>
+        <span id="generateHint" class="hint">변환 후 내용을 꼭 확인하고 저장하세요.</span>
       </div>
       <div id="draft" class="draft"></div>
     </section>

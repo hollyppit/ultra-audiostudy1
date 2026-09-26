@@ -357,13 +357,6 @@
   }
 
   /* ---------- 카드 만들기 ---------- */
-  function parseManual(text) {
-    return text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
-      const [question, answer, explanation] = l.split(/\s*(?:::|\||\t)\s*/);
-      return { question, answer, explanation: explanation || '' };
-    }).filter((c) => c.question && c.answer);
-  }
-
   async function authHeaders() {
     const h = { 'content-type': 'application/json' };
     if (session) h.authorization = 'Bearer ' + session.access_token;
@@ -381,11 +374,31 @@
     $('#makeTitle').textContent = ab ? '메모를 오디오북으로 정리해요' : '메모를 카드로 바꿔요';
     $('#makeSub').textContent = ab
       ? '붙여넣은 메모를 문단별로 나눠, 적은 그대로 순서대로 읽어줘요.'
-      : '한 줄에 하나씩 "질문 :: 정답 :: 해설" 형식으로 적으면 카드가 만들어져요.';
-    $('#generate').textContent = ab ? '오디오북으로 정리' : '카드로 변환';
-    $('#memo').placeholder = ab
-      ? '공부한 내용을 그대로 붙여넣으세요.\n\n주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요.'
-      : '한 줄에 카드 하나씩 적으세요.\n\n질문 :: 정답 :: 해설(선택)\n예) 대한민국의 수도는? :: 서울 :: 1394년부터 수도\n\n:: 대신 | 나 탭으로 구분해도 돼요.';
+      : '문제·정답·해설을 칸마다 적고 "카드 추가"를 누르세요. 여러 장 추가한 뒤 한 번에 저장해요.';
+    $('#generate').textContent = ab ? '오디오북으로 정리' : '카드 추가';
+    $('#generateHint').textContent = ab ? '변환 후 내용을 꼭 확인하고 저장하세요.' : '추가한 카드는 아래에서 고치거나 뺄 수 있어요. (Ctrl+Enter로도 추가)';
+    $('#memoAttachHint').innerHTML = ab
+      ? '사진·영상을 붙이면 이 메모로 만드는 <b>모든 카드</b>에 함께 붙어요. 만든 뒤 카드마다 빼거나 더 추가할 수 있어요.'
+      : '사진·영상을 붙이면 <b>다음에 추가하는 카드</b>에 붙어요.';
+    $('#memoField').hidden = !ab;
+    $('#qaForm').hidden = ab;
+  }
+
+  // 말로 메모하기·녹음 파일 글자가 들어갈 칸: 오디오북은 메모 칸, 문제·정답은 마지막으로 누른 칸
+  let qaField = 'qaQ';
+  const dictTarget = () => $(mode === 'audiobook' ? '#memo' : '#' + qaField);
+
+  // 문제·정답 카드: 칸에 적은 내용으로 카드 한 장을 초안에 추가
+  function addQaCard() {
+    const q = $('#qaQ').value.trim(), a = $('#qaA').value.trim(), e = $('#qaE').value.trim();
+    if (!q) { $('#qaQ').focus(); return toast('문제를 적어 주세요.'); }
+    if (!a) { $('#qaA').focus(); return toast('정답을 적어 주세요.'); }
+    state.draft.push({ question: q, answer: a, explanation: e, media: state.memoMedia });
+    state.memoMedia = []; refreshMemoAttach(); // 첨부는 이 카드가 가짐
+    ['#qaQ', '#qaA', '#qaE'].forEach((s) => { $(s).value = ''; });
+    qaField = 'qaQ'; $('#qaQ').focus();
+    renderDraft();
+    toast(`카드 ${state.draft.length}장째를 추가했어요. 다 만들면 아래에서 저장하세요.`);
   }
 
   // 오디오북: AI 없이 빈 줄로 나뉜 덩어리를 그대로 한 항목씩 (기호만 정리)
@@ -399,24 +412,16 @@
   // AI 없이 브라우저에서 바로 변환합니다.
   function generate() {
     stopDictation();
+    if (state.memoUploading) return toast('첨부를 올리는 중이에요. 끝나면 다시 눌러 주세요.');
+    if (mode === 'qa') return addQaCard();
     const text = $('#memo').value.trim();
     if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
-    if (state.memoUploading) return toast('첨부를 올리는 중이에요. 끝나면 다시 눌러 주세요.');
-    const prevDraft = state.draft;
     const oldPaths = state.draft.flatMap((c) => mediaPaths(c.media)); // 이전 초안의 첨부는 새 초안을 만든 뒤 (쓰이지 않는 것만) 정리
-    if (mode === 'audiobook') {
-      state.draft = parseAudiobook(text); // 메모를 문단 그대로 담음
-    } else {
-      const parsed = parseManual(text); // "질문 :: 정답 :: 해설" 줄 단위로 변환
-      if (parsed.length) state.draft = parsed;
-      else toast('한 줄에 하나씩 "질문 :: 정답" 형식으로 적어 주세요.');
-    }
-    if (state.draft !== prevDraft) { // 새 초안이 만들어진 경우에만 (변환에 실패해 이전 초안이 그대로면 건드리지 않음)
-      // 메모 화면에서 붙인 첨부를 만들어진 모든 카드에 붙임
-      state.draft.forEach((c) => { c.media = state.memoMedia.map((m) => ({ ...m })); });
-      renderDraft();
-      deleteMediaSafe(oldPaths);
-    } else renderDraft();
+    state.draft = parseAudiobook(text); // 메모를 문단 그대로 담음
+    // 메모 화면에서 붙인 첨부를 만들어진 모든 카드에 붙임
+    state.draft.forEach((c) => { c.media = state.memoMedia.map((m) => ({ ...m })); });
+    renderDraft();
+    deleteMediaSafe(oldPaths);
   }
 
   /* ---------- 이미지·영상 첨부 (Supabase Storage) ----------
@@ -646,6 +651,10 @@
 
   async function saveDraft() {
     const t = (s) => (s || '').trim();
+    if (mode === 'qa' && (t($('#qaQ').value) || t($('#qaA').value))) {
+      $('#generate').focus();
+      return toast('칸에 적어 둔 카드가 있어요. "카드 추가"를 먼저 누르거나 칸을 비워 주세요.');
+    }
     const kept = state.draft.filter((c) => (c.kind === 'note' ? t(c.answer) : t(c.question) && t(c.answer)));
     const dropped = state.draft.filter((c) => !kept.includes(c)); // 내용이 비어 저장되지 않는 항목의 첨부는 정리
     const cards = kept.map((c) => {
@@ -701,7 +710,7 @@
     rec.interimResults = true;
 
     rec.onresult = (e) => {
-      const memo = $('#memo');
+      const memo = dictTarget();
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript.trim();
@@ -821,7 +830,7 @@
 
       const pts = sttSplit(mono, sr);
       const total = pts.length - 1;
-      const memo = $('#memo');
+      const memo = dictTarget();
       let got = 0;
       for (let k = 0; k < total; k++) {
         if (token !== sttRun) return;
@@ -1690,6 +1699,11 @@
     initDictation();
     initStt();
     $('#generate').onclick = generate;
+    ['qaQ', 'qaA', 'qaE'].forEach((id) => {
+      const el = $('#' + id);
+      el.addEventListener('focus', () => { qaField = id; });
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generate(); } });
+    });
     $('#draft').addEventListener('input', (e) => {
       const t = e.target;
       if (t.dataset.i !== undefined) state.draft[Number(t.dataset.i)][t.dataset.k] = t.value;
