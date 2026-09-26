@@ -380,28 +380,15 @@
     const ab = m === 'audiobook';
     $('#makeTitle').textContent = ab ? '메모를 오디오북으로 정리해요' : '메모를 카드로 바꿔요';
     $('#makeSub').textContent = ab
-      ? '붙여넣은 메모를 듣기 좋은 문장으로 다듬어, 순서대로 읽어줘요.'
-      : '공부한 내용을 붙여넣으면 문제·정답·해설 카드가 만들어져요.';
+      ? '붙여넣은 메모를 문단별로 나눠, 적은 그대로 순서대로 읽어줘요.'
+      : '한 줄에 하나씩 "질문 :: 정답 :: 해설" 형식으로 적으면 카드가 만들어져요.';
     $('#generate').textContent = ab ? '오디오북으로 정리' : '카드로 변환';
     $('#memo').placeholder = ab
-      ? '공부한 내용을 그대로 붙여넣으세요.\n\n주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요.\nAI를 못 쓰는 환경에서는 문단 그대로 담겨요.'
-      : '공부한 내용을 그대로 붙여넣으세요.\n\nAI를 못 쓰는 환경에서는 한 줄에 하나씩\n질문 :: 정답 :: 해설(선택)\n형식으로 적어도 카드가 됩니다.';
+      ? '공부한 내용을 그대로 붙여넣으세요.\n\n주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요.'
+      : '한 줄에 카드 하나씩 적으세요.\n\n질문 :: 정답 :: 해설(선택)\n예) 대한민국의 수도는? :: 서울 :: 1394년부터 수도\n\n:: 대신 | 나 탭으로 구분해도 돼요.';
   }
 
-  // 메모를 문단 단위로 묶어 한 번에 5,000자 이하로 보냅니다. (AI 호출 한도 대응)
-  function chunkMemo(text, max = 5000) {
-    const paras = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
-    const out = [];
-    let cur = '';
-    for (let p of paras) {
-      while (p.length > max) { if (cur) { out.push(cur); cur = ''; } out.push(p.slice(0, max)); p = p.slice(max); }
-      if (cur && (cur + '\n\n' + p).length > max) { out.push(cur); cur = p; } else cur = cur ? cur + '\n\n' + p : p;
-    }
-    if (cur) out.push(cur);
-    return out;
-  }
-
-  // AI를 못 쓸 때: 빈 줄로 나뉜 덩어리를 그대로 한 항목씩 (기호만 정리)
+  // 오디오북: AI 없이 빈 줄로 나뉜 덩어리를 그대로 한 항목씩 (기호만 정리)
   function parseAudiobook(text) {
     const clean = (s) => s.replace(/^[\s#>*•\-·▶■●○]+/gm, '').replace(/\s*\n\s*/g, ' ').trim();
     const paras = text.split(/\n{2,}/).map(clean).filter(Boolean);
@@ -409,52 +396,20 @@
     return list.map((body) => ({ kind: 'note', question: '', answer: body, explanation: '' }));
   }
 
-  async function callCards(text, m) {
-    const res = await fetch('/api/cards', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text, mode: m }) });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
-    return j.cards;
-  }
-
-  async function generate() {
+  // AI 없이 브라우저에서 바로 변환합니다.
+  function generate() {
     stopDictation();
     const text = $('#memo').value.trim();
     if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
     if (state.memoUploading) return toast('첨부를 올리는 중이에요. 끝나면 다시 눌러 주세요.');
-    const btn = $('#generate');
     const prevDraft = state.draft;
     const oldPaths = state.draft.flatMap((c) => mediaPaths(c.media)); // 이전 초안의 첨부는 새 초안을 만든 뒤 (쓰이지 않는 것만) 정리
-    const idleLabel = btn.textContent;
-    btn.disabled = true; btn.textContent = mode === 'audiobook' ? '정리 중…' : '변환 중…';
-    try {
-      if (mode === 'audiobook') {
-        try {
-          const parts = chunkMemo(text);
-          const all = [];
-          for (let i = 0; i < parts.length; i++) {
-            if (parts.length > 1) btn.textContent = `정리 중… ${i + 1} / ${parts.length}`;
-            all.push(...await callCards(parts[i], 'audiobook'));
-          }
-          state.draft = all;
-        } catch (e) {
-          state.draft = parseAudiobook(text);
-          toast('AI 정리를 쓸 수 없어 메모를 문단 그대로 담았어요. (' + e.message + ')');
-        }
-      } else {
-        try {
-          state.draft = await callCards(text, 'qa');
-        } catch (e) {
-          const parsed = parseManual(text);
-          if (parsed.length) {
-            state.draft = parsed;
-            toast('AI 변환을 쓸 수 없어 구분자 방식으로 변환했어요. (' + e.message + ')');
-          } else {
-            toast('AI 변환 실패: ' + e.message + ' — "질문 :: 정답" 형식으로 적으면 바로 변환돼요.');
-          }
-        }
-      }
-    } finally {
-      btn.disabled = false; btn.textContent = idleLabel;
+    if (mode === 'audiobook') {
+      state.draft = parseAudiobook(text); // 메모를 문단 그대로 담음
+    } else {
+      const parsed = parseManual(text); // "질문 :: 정답 :: 해설" 줄 단위로 변환
+      if (parsed.length) state.draft = parsed;
+      else toast('한 줄에 하나씩 "질문 :: 정답" 형식으로 적어 주세요.');
     }
     if (state.draft !== prevDraft) { // 새 초안이 만들어진 경우에만 (변환에 실패해 이전 초안이 그대로면 건드리지 않음)
       // 메모 화면에서 붙인 첨부를 만들어진 모든 카드에 붙임

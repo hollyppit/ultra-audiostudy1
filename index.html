@@ -59,7 +59,7 @@
         <p>공부한 메모를 붙여넣기만 하면 오디오북처럼 읽어줘요. 이동 중에도, 눈을 감고도 복습하세요. 원하면 문제·정답 카드로도 만들 수 있어요.</p>
         <ol>
           <li><b>1</b><span>메모 붙여넣기<small>노트, 요약본 아무거나 (말로 입력도 가능)</small></span></li>
-          <li><b>2</b><span>오디오북 또는 카드로 만들기<small>AI가 듣기 좋게 다듬어요</small></span></li>
+          <li><b>2</b><span>오디오북 또는 카드로 만들기<small>적은 그대로 바로 만들어져요</small></span></li>
           <li><b>3</b><span>재생 버튼 누르고 듣기<small>오디오북은 순서대로, 카드는 문제 → 정답 순서로</small></span></li>
         </ol>
       </div>
@@ -215,14 +215,14 @@
     <!-- 카드 만들기 -->
     <section id="view-make" hidden>
       <h2 id="makeTitle" class="sec-title">메모를 오디오북으로 정리해요</h2>
-      <p id="makeSub" class="sec-sub">붙여넣은 메모를 듣기 좋은 문장으로 다듬어, 순서대로 읽어줘요.</p>
+      <p id="makeSub" class="sec-sub">붙여넣은 메모를 문단별로 나눠, 적은 그대로 순서대로 읽어줘요.</p>
       <div class="seg" role="radiogroup" aria-label="만들기 방식">
         <button type="button" role="radio" data-mode="audiobook" aria-checked="true"><b>오디오북</b><small>메모를 그대로 들어요</small></button>
         <button type="button" role="radio" data-mode="qa" aria-checked="false"><b>문제·정답 카드</b><small>퀴즈처럼 외워요</small></button>
       </div>
       <p id="saveTarget" class="save-target"></p>
       <label class="field"><span class="sr">메모 붙여넣기</span>
-        <textarea id="memo" rows="9" placeholder="공부한 내용을 그대로 붙여넣으세요.&#10;&#10;AI를 못 쓰는 환경에서는 한 줄에 하나씩&#10;질문 :: 정답 :: 해설(선택)&#10;형식으로 적어도 카드가 됩니다."></textarea>
+        <textarea id="memo" rows="9" placeholder="공부한 내용을 그대로 붙여넣으세요.&#10;&#10;주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요."></textarea>
       </label>
       <div class="mic-row">
         <button id="mic" class="ghost mic" type="button" aria-pressed="false">
