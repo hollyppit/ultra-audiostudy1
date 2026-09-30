@@ -18,7 +18,7 @@
   const savedSettings = safeJSON(localStorage.getItem('uas.settings'), {});
   if (savedSettings.ver !== SETTINGS_VER) { delete savedSettings.engine; delete savedSettings.voice; }
   const settings = Object.assign(
-    { engine: 'cloud', voice: DEFAULT_VOICE, warm: true, rate: 1, gap: 4, shuffle: true, repeat: 'off', laps: 3, weak: true, explain: true },
+    { engine: 'cloud', voice: DEFAULT_VOICE, warm: true, rate: 1, gap: 4, shuffle: true, repeat: 'off', laps: 3, weak: true, explain: true, bgm: '', bgmVol: 0.45 },
     savedSettings,
     { ver: SETTINGS_VER }
   );
@@ -1380,6 +1380,62 @@
     }
   }
 
+  /* ---------- 배경음 ----------
+     bgm/<id>.mp3 (Freesound CC0, 출처는 bgm/CREDITS.md). 음성용 #audio 와 따로 재생해서 배속이 걸리지 않고, 카드가 넘어가도 끊기지 않아요.
+     반복할 때 '툭' 소리가 나지 않도록 오디오 두 개를 끝 3초 구간에서 교차 페이드합니다.
+     (iOS 는 audio.volume 을 바꿀 수 없어서 그 기기에서는 교차 페이드 대신 loop 로 이어 붙이고, 크기 슬라이더는 끕니다.) */
+  const BGM_IDS = ['waves', 'stream', 'fire', 'grass', 'rain'];
+  const BGM_XFADE = 3; // 초
+  const bgmEls = [$('#bgmA'), $('#bgmB')];
+  const bgmVolOk = (() => { const a = new Audio(); a.volume = 0.5; return a.volume === 0.5; })();
+  let bgmCur = 0, bgmId = '', bgmTimer = 0, bgmPreview = false;
+
+  const bgmLevel = () => { const v = Math.max(0, Math.min(1, Number(settings.bgmVol) || 0)); return v * v; }; // 작은 쪽을 촘촘하게
+
+  function bgmFade(el, to, ms, done) {
+    clearInterval(el._fade);
+    if (!bgmVolOk || !ms) { if (bgmVolOk) el.volume = to; if (done) done(); return; }
+    const from = el.volume, t0 = performance.now();
+    el._fade = setInterval(() => {
+      const k = Math.min(1, (performance.now() - t0) / ms);
+      el.volume = from + (to - from) * k;
+      if (k >= 1) { clearInterval(el._fade); if (done) done(); }
+    }, 50);
+  }
+
+  function bgmWatch() { // 끝나기 3초 전부터 다음 오디오를 겹쳐 시작
+    const el = bgmEls[bgmCur];
+    if (!bgmVolOk || el.paused || !(el.duration > BGM_XFADE * 2)) return;
+    if (el.duration - el.currentTime > BGM_XFADE) return;
+    const nx = bgmEls[1 - bgmCur];
+    nx.currentTime = 0; nx.volume = 0;
+    nx.play().catch(() => {});
+    bgmFade(nx, bgmLevel(), BGM_XFADE * 1000);
+    bgmFade(el, 0, BGM_XFADE * 1000, () => el.pause());
+    bgmCur = 1 - bgmCur;
+  }
+
+  function bgmStart() {
+    const id = settings.bgm;
+    if (!BGM_IDS.includes(id)) return bgmStop(0);
+    clearInterval(bgmTimer);
+    if (bgmId !== id) { // 곡이 바뀌면 둘 다 새로
+      bgmEls.forEach((e) => { clearInterval(e._fade); e.pause(); e.src = `bgm/${id}.mp3`; e.currentTime = 0; });
+      bgmId = id; bgmCur = 0;
+    }
+    const el = bgmEls[bgmCur];
+    el.loop = !bgmVolOk;
+    if (el.paused) { if (bgmVolOk) el.volume = 0; el.play().catch(() => {}); }
+    bgmFade(el, bgmLevel(), 1500);
+    bgmTimer = setInterval(bgmWatch, 250);
+  }
+
+  function bgmStop(ms = 600) {
+    clearInterval(bgmTimer);
+    bgmPreview = false;
+    bgmEls.forEach((e) => { if (!e.paused) bgmFade(e, 0, ms, () => e.pause()); });
+  }
+
   /* ---------- 음성 미리 만들기 (저장할 때 / 관리 화면에서) ---------- */
   // 재생할 때 실제로 읽는 문장들과 똑같이 나눠서, 카드의 목소리로 서버에 "만들어서 저장만" 요청합니다. (다음 재생부터 바로 나옴)
   function speechTexts(c) {
@@ -1501,6 +1557,7 @@
     if (!state.queue.length) return toast('먼저 카드를 만들어 주세요.');
     const token = ++runToken;
     state.playing = true; setPlayIcon(); updateMedia();
+    bgmStart();
     // 카드 하나를 다 읽은 뒤 다음 위치로. 더 재생할 게 없으면 false.
     const advance = () => {
       if (settings.repeat === 'one') return true;
@@ -1549,14 +1606,15 @@
     }
     if (token === runToken) {
       const laps = state.lap;
-      state.playing = false; state.idx = 0; state.lap = 1; setPlayIcon();
+      state.playing = false; state.idx = 0; state.lap = 1; setPlayIcon(); bgmStop(1500);
       setPhase(laps > 1 ? `${laps}바퀴 끝났어요` : '한 바퀴 끝났어요'); renderPlayer(null, false);
     }
   }
 
-  function stop() {
+  function stop(keepBgm) { // keepBgm: 카드 이동(jump)처럼 곧바로 다시 재생할 때 배경음이 끊기지 않게
     runToken++;
     state.playing = false;
+    if (keepBgm !== true) bgmStop();
     if (stopCurrent) stopCurrent();
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     audio.pause();
@@ -1570,7 +1628,7 @@
   function jump(d) {
     if (!state.queue.length) return;
     const was = state.playing;
-    stop();
+    stop(was);
     state.idx = Math.max(0, Math.min(state.queue.length - 1, state.idx + d));
     renderPlayer(state.queue[state.idx], false);
     if (was) run();
@@ -1646,6 +1704,28 @@
     $('#lapPlus').onclick = () => setLaps(settings.laps + 1);
     $('#sWeak').onchange = (e) => { settings.weak = e.target.checked; persist(); stop(); buildQueue(); renderPlayer(null, false); };
     $('#sExplain').onchange = (e) => { settings.explain = e.target.checked; persist(); };
+
+    if (!BGM_IDS.includes(settings.bgm)) settings.bgm = '';
+    $('#sBgm').value = settings.bgm;
+    $('#sBgmVol').value = settings.bgmVol;
+    $('#oBgm').textContent = Math.round(settings.bgmVol * 100) + '%';
+    if (!bgmVolOk) {
+      $('#sBgmVol').disabled = true;
+      $('#bgmHint').textContent = '이 기기(아이폰 등)는 앱 안에서 배경음 크기를 바꿀 수 없어요. 기본 크기로 나와요.';
+    }
+    $('#sBgm').onchange = (e) => {
+      settings.bgm = e.target.value; persist();
+      if (!settings.bgm) bgmStop(); else if (state.playing || bgmPreview) bgmStart();
+    };
+    $('#sBgmVol').oninput = (e) => {
+      settings.bgmVol = Number(e.target.value); $('#oBgm').textContent = Math.round(settings.bgmVol * 100) + '%'; persist();
+      if (bgmVolOk) bgmFade(bgmEls[bgmCur], bgmLevel(), 0);
+    };
+    $('#bgmTest').onclick = () => {
+      if (bgmPreview) return bgmStop();
+      if (!settings.bgm) return toast('먼저 배경음을 골라 주세요.');
+      bgmPreview = true; bgmStart();
+    };
     $('#sWarm').onchange = (e) => { settings.warm = e.target.checked; persist(); };
   }
 

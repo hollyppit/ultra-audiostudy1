@@ -208,6 +208,26 @@
           </label>
           <label class="check"><input id="sWeak" type="checkbox"><span>헷갈린 카드를 더 자주</span></label>
           <label class="check"><input id="sExplain" type="checkbox"><span>해설도 읽기</span></label>
+          <div class="field-row">
+            <label for="sBgm">배경음 <span class="opt">(재생하는 동안 조용히 깔려요)</span></label>
+            <div class="voice-row">
+              <select id="sBgm">
+                <option value="">없음</option>
+                <optgroup label="자연 소리">
+                  <option value="waves">파도 소리</option>
+                  <option value="stream">시냇물 소리</option>
+                  <option value="fire">캠핑 모닥불 소리</option>
+                  <option value="grass">풀숲·풀벌레 소리</option>
+                  <option value="rain">빗소리</option>
+                </optgroup>
+              </select>
+              <button id="bgmTest" type="button" class="ghost">들어보기</button>
+            </div>
+            <label>배경음 크기 <output id="oBgm"></output>
+              <input id="sBgmVol" type="range" min="0" max="1" step="0.05">
+            </label>
+            <p class="hint" id="bgmHint">소리 출처: Freesound (CC0). 자세한 내용은 bgm/CREDITS.md에 있어요.</p>
+          </div>
         </div>
       </details>
     </section>
@@ -325,6 +345,8 @@
   </dialog>
 
   <audio id="audio" preload="auto" playsinline></audio>
+  <audio id="bgmA" preload="auto" playsinline></audio>
+  <audio id="bgmB" preload="auto" playsinline></audio>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
