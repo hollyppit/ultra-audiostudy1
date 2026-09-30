@@ -11,4 +11,15 @@
 | grass.mp3 | WindSwellMildNovemberCricket2013.wav | kvgarlic | https://freesound.org/people/kvgarlic/sounds/208008/ |
 | rain.mp3 | Forestia_RainOnLeaves_Field-Recording_ThinkingFish.wav | thinkingfish | https://freesound.org/people/thinkingfish/sounds/695619/ |
 
+## 음악 (2026-10-01 내려받음, 모두 CC0 1.0)
+
+| 파일 | 제목 | 제작자 | 원본 |
+|---|---|---|---|
+| guitar_calm.mp3 | GuitarDandCWithLONGERFade.wav | kvgarlic | https://freesound.org/people/kvgarlic/sounds/209334/ |
+| guitar_lonely.mp3 | A Lonely Planet | Antenalosmusic | https://freesound.org/people/Antenalosmusic/sounds/714933/ |
+| guitar_flamenco.mp3 | Lament of the Vaquero v1 | city11 | https://freesound.org/people/city11/sounds/735080/ |
+| lofi_guitar.mp3 | Lofi Guitar Beat 70bpm | Seth_Makes_Sounds | https://freesound.org/people/Seth_Makes_Sounds/sounds/659278/ |
+| coffee_jam.mp3 | Coffee (ft. brahne) - 124bpm | tukyo.eth | https://freesound.org/people/tukyo.eth/sounds/608355/ |
+| easy_chill.mp3 | Easy Going Music Loop | Seth_Makes_Sounds | https://freesound.org/people/Seth_Makes_Sounds/sounds/691837/ |
+
 CC0 전문: https://creativecommons.org/publicdomain/zero/1.0/
