@@ -22,4 +22,11 @@
 | coffee_jam.mp3 | Coffee (ft. brahne) - 124bpm | tukyo.eth | https://freesound.org/people/tukyo.eth/sounds/608355/ |
 | easy_chill.mp3 | Easy Going Music Loop | Seth_Makes_Sounds | https://freesound.org/people/Seth_Makes_Sounds/sounds/691837/ |
 
+## 힙합 (2026-10-01 내려받음, 모두 CC0 1.0)
+
+| 파일 | 제목 | 제작자 | 원본 |
+|---|---|---|---|
+| hiphop_overloaded.mp3 | Over Loaded \| Hiphop Instrumental | kontraamusic | https://freesound.org/people/kontraamusic/sounds/790942/ |
+| hiphop_summer.mp3 | Summer [Guitar Hip-Hop Beat] | Seth_Makes_Sounds | https://freesound.org/people/Seth_Makes_Sounds/sounds/820076/ |
+
 CC0 전문: https://creativecommons.org/publicdomain/zero/1.0/
