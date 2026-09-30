@@ -28,5 +28,7 @@
 |---|---|---|---|
 | hiphop_overloaded.mp3 | Over Loaded \| Hiphop Instrumental | kontraamusic | https://freesound.org/people/kontraamusic/sounds/790942/ |
 | hiphop_summer.mp3 | Summer [Guitar Hip-Hop Beat] | Seth_Makes_Sounds | https://freesound.org/people/Seth_Makes_Sounds/sounds/820076/ |
+| hiphop_smoke.mp3 | Smoke - 1 Min. Hip Hop Loop | Cloud-10 | https://freesound.org/people/Cloud-10/sounds/634685/ |
+| hiphop_rap90.mp3 | Rap loops 001 simple mix 2 long loop 90 bpm | josefpres | https://freesound.org/people/josefpres/sounds/573844/ |
 
 CC0 전문: https://creativecommons.org/publicdomain/zero/1.0/

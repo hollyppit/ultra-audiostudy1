@@ -1384,7 +1384,7 @@
      bgm/<id>.mp3 (Freesound CC0, 출처는 bgm/CREDITS.md). 음성용 #audio 와 따로 재생해서 배속이 걸리지 않고, 카드가 넘어가도 끊기지 않아요.
      반복할 때 '툭' 소리가 나지 않도록 오디오 두 개를 끝 3초 구간에서 교차 페이드합니다.
      (iOS 는 audio.volume 을 바꿀 수 없어서 그 기기에서는 교차 페이드 대신 loop 로 이어 붙이고, 크기 슬라이더는 끕니다.) */
-  const BGM_IDS = ['waves', 'stream', 'fire', 'grass', 'rain', 'guitar_calm', 'guitar_lonely', 'guitar_flamenco', 'lofi_guitar', 'coffee_jam', 'easy_chill', 'hiphop_overloaded', 'hiphop_summer'];
+  const BGM_IDS = ['waves', 'stream', 'fire', 'grass', 'rain', 'guitar_calm', 'guitar_lonely', 'guitar_flamenco', 'lofi_guitar', 'coffee_jam', 'easy_chill', 'hiphop_overloaded', 'hiphop_summer', 'hiphop_smoke', 'hiphop_rap90'];
   const BGM_XFADE = 3; // 초
   const bgmEls = [$('#bgmA'), $('#bgmB')];
   const bgmVolOk = (() => { const a = new Audio(); a.volume = 0.5; return a.volume === 0.5; })();
