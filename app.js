@@ -374,18 +374,17 @@
     $('#makeTitle').textContent = ab ? '메모를 오디오북으로 정리해요' : '메모를 카드로 바꿔요';
     $('#makeSub').textContent = ab
       ? '붙여넣은 메모를 AI가 듣기 좋게 항목별로 정리해, 순서대로 읽어줘요.'
-      : '문제·정답·해설을 칸마다 적고 "카드 추가"를 누르세요. 여러 장 추가한 뒤 한 번에 저장해요.';
-    $('#generate').textContent = ab ? '오디오북으로 정리' : '카드 추가';
-    $('#generateHint').textContent = ab ? '변환 후 내용을 꼭 확인하고 저장하세요.' : '추가한 카드는 아래에서 고치거나 뺄 수 있어요. (Ctrl+Enter로도 추가)';
-    $('#memoAttachHint').innerHTML = ab
-      ? '사진·영상을 붙이면 이 메모로 만드는 <b>모든 카드</b>에 함께 붙어요. 만든 뒤 카드마다 빼거나 더 추가할 수 있어요.'
-      : '사진·영상을 붙이면 <b>다음에 추가하는 카드</b>에 붙어요.';
-    $('#memoField').hidden = !ab;
-    $('#qaForm').hidden = ab;
+      : '공부한 내용을 붙여넣으면 AI가 문제·정답·해설 카드로 만들어요.';
+    $('#generate').textContent = ab ? '오디오북으로 정리' : '카드로 변환';
+    $('#generateHint').textContent = '변환 후 내용을 꼭 확인하고 저장하세요.';
+    $('#memo').placeholder = ab
+      ? '공부한 내용을 그대로 붙여넣으세요.\n\n주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요.'
+      : '공부한 내용을 그대로 붙여넣으세요.\n\nAI가 문제·정답·해설 카드로 나눠 줘요.';
+    $('#qaManual').hidden = ab;
   }
 
   // 말로 메모하기·녹음 파일 글자가 들어갈 칸: 오디오북은 메모 칸, 문제·정답은 마지막으로 누른 칸
-  let qaField = 'qaQ';
+  let qaField = 'memo';
   const dictTarget = () => $(mode === 'audiobook' ? '#memo' : '#' + qaField);
 
   // 문제·정답 카드: 칸에 적은 내용으로 카드 한 장을 초안에 추가
@@ -396,7 +395,7 @@
     state.draft.push({ question: q, answer: a, explanation: e, media: state.memoMedia });
     state.memoMedia = []; refreshMemoAttach(); // 첨부는 이 카드가 가짐
     ['#qaQ', '#qaA', '#qaE'].forEach((s) => { $(s).value = ''; });
-    qaField = 'qaQ'; $('#qaQ').focus();
+    $('#qaQ').focus();
     renderDraft();
     toast(`카드 ${state.draft.length}장째를 추가했어요. 다 만들면 아래에서 저장하세요.`);
   }
@@ -422,8 +421,8 @@
     return out;
   }
 
-  async function callCards(text) {
-    const res = await fetch('/api/cards', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text }) });
+  async function callCards(text, m) {
+    const res = await fetch('/api/cards', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text, mode: m }) });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
     return j.cards;
@@ -433,26 +432,33 @@
   async function generate() {
     stopDictation();
     if (state.memoUploading) return toast('첨부를 올리는 중이에요. 끝나면 다시 눌러 주세요.');
-    if (mode === 'qa') return addQaCard();
     const text = $('#memo').value.trim();
     if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
     const btn = $('#generate');
     const idleLabel = btn.textContent;
-    btn.disabled = true; btn.textContent = '정리 중…';
+    const m = mode;
+    btn.disabled = true; btn.textContent = m === 'qa' ? '변환 중…' : '정리 중…';
     let cards;
     try {
       const parts = chunkMemo(text);
       const all = [];
       for (let i = 0; i < parts.length; i++) {
-        if (parts.length > 1) btn.textContent = `정리 중… ${i + 1} / ${parts.length}`;
-        all.push(...await callCards(parts[i]));
+        if (parts.length > 1) btn.textContent = `${m === 'qa' ? '변환' : '정리'} 중… ${i + 1} / ${parts.length}`;
+        all.push(...await callCards(parts[i], m));
       }
       cards = all;
     } catch (e) {
+      if (m === 'qa') { toast('AI 변환에 실패했어요. (' + e.message + ') 아래 "직접 한 장씩 적어서 추가하기"를 써 주세요.'); return; }
       cards = parseAudiobook(text);
       toast('AI 정리를 쓸 수 없어 메모를 문단 그대로 담았어요. (' + e.message + ')');
     } finally {
       btn.disabled = false; btn.textContent = idleLabel;
+    }
+    if (m === 'qa') { // 카드 모드: 직접 적어 추가한 카드는 그대로 두고 뒤에 이어 붙임
+      cards.forEach((c) => { c.media = state.memoMedia.map((x) => ({ ...x })); });
+      state.draft = state.draft.concat(cards);
+      renderDraft();
+      return;
     }
     const oldPaths = state.draft.flatMap((c) => mediaPaths(c.media)); // 이전 초안의 첨부는 새 초안을 만든 뒤 (쓰이지 않는 것만) 정리
     state.draft = cards;
@@ -1817,10 +1823,12 @@
     initDictation();
     initStt();
     $('#generate').onclick = generate;
+    $('#qaAdd').onclick = () => { stopDictation(); addQaCard(); };
+    $('#memo').addEventListener('focus', () => { qaField = 'memo'; });
     ['qaQ', 'qaA', 'qaE'].forEach((id) => {
       const el = $('#' + id);
       el.addEventListener('focus', () => { qaField = id; });
-      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generate(); } });
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addQaCard(); } });
     });
     $('#draft').addEventListener('input', (e) => {
       const t = e.target;

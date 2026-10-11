@@ -255,11 +255,6 @@
         <button type="button" role="radio" data-mode="qa" aria-checked="false"><b>문제·정답 카드</b><small>퀴즈처럼 외워요</small></button>
       </div>
       <p id="saveTarget" class="save-target"></p>
-      <div id="qaForm" class="qa-form" hidden>
-        <label class="field"><span>문제</span><textarea id="qaQ" rows="2" placeholder="예) 대한민국의 수도는?"></textarea></label>
-        <label class="field"><span>정답</span><textarea id="qaA" rows="2" placeholder="예) 서울"></textarea></label>
-        <label class="field"><span>해설 <span class="opt">(선택)</span></span><textarea id="qaE" rows="2" placeholder="예) 1394년부터 수도예요."></textarea></label>
-      </div>
       <label id="memoField" class="field"><span class="sr">메모 붙여넣기</span>
         <textarea id="memo" rows="9" placeholder="공부한 내용을 그대로 붙여넣으세요.&#10;&#10;주제가 바뀌는 곳에 빈 줄을 넣으면 항목별로 나눠서 읽어줘요."></textarea>
       </label>
@@ -268,6 +263,15 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
           <span id="micLabel">말로 메모하기</span>
         </button>
+      <details id="qaManual" class="qa-manual" hidden>
+        <summary>직접 한 장씩 적어서 추가하기</summary>
+        <div id="qaForm" class="qa-form">
+          <label class="field"><span>문제</span><textarea id="qaQ" rows="2" placeholder="예) 대한민국의 수도는?"></textarea></label>
+          <label class="field"><span>정답</span><textarea id="qaA" rows="2" placeholder="예) 서울"></textarea></label>
+          <label class="field"><span>해설 <span class="opt">(선택)</span></span><textarea id="qaE" rows="2" placeholder="예) 1394년부터 수도예요."></textarea></label>
+          <div class="row"><button id="qaAdd" type="button" class="ghost">카드 추가</button><span class="hint">Ctrl+Enter로도 추가돼요.</span></div>
+        </div>
+      </details>
         <button id="sttBtn" class="ghost mic" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/></svg>
           <span id="sttLabel">녹음 파일 → 글자</span>

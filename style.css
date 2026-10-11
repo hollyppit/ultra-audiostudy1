@@ -261,7 +261,9 @@ textarea, .draft input {
   background: var(--surface); box-shadow: var(--shadow); font-weight: 400; resize: vertical;
 }
 textarea:focus, .account input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: 0; border-color: transparent; }
-.qa-form { display: grid; gap: 12px; }
+.qa-form { display: grid; gap: 12px; margin-top: 12px; }
+.qa-manual { margin-top: 18px; padding: 12px 14px; border: 1px dashed var(--line, #3a3f6b); border-radius: 12px; }
+.qa-manual summary { cursor: pointer; font-weight: 600; }
 .qa-form .field > span { font-size: 14px; }
 .mic-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .stt-status { margin: 8px 0 0; }

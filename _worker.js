@@ -36,13 +36,27 @@ const SYSTEM_AUDIOBOOK = `당신은 학습 메모를 "귀로 듣는 오디오북
 - 응답은 JSON 배열만 출력하세요. 설명, 코드블록 표시는 금지입니다.
 형식: [{"title":"...","body":"..."}]`;
 
+// 문제·정답 카드: 메모를 문제/정답/해설 카드로 나눕니다.
+const SYSTEM_QA = `당신은 자격증 시험 준비용 "오디오 학습 카드"를 만드는 도우미입니다.
+사용자가 준 메모를 문제/정답/해설 카드로 나눕니다.
+
+규칙:
+- 메모에 있는 내용만 사용하세요. 메모에 없는 사실을 추가하거나 추측하지 마세요.
+- 귀로만 듣습니다. 문제는 그 자체로 이해되게 쓰고, "위 표", "다음 그림" 같은 표현은 쓰지 마세요.
+- 문제는 한 문장, 정답은 짧게(가능하면 한 문장 이내), 해설은 1~2문장으로 쓰세요.
+- 숫자, 약어, 고유명사는 메모 그대로 유지하세요.
+- 메모 하나에서 카드 여러 장이 나올 수 있습니다. 중요도가 낮은 문장은 건너뛰세요.
+- 응답은 JSON 배열만 출력하세요. 설명, 코드블록 표시는 금지입니다.
+형식: [{"question":"...","answer":"...","explanation":"..."}]`;
+
 async function handleCards({ request, env }) {
   const auth = await requireUser(request, env);
   if (!auth.ok) return json({ error: auth.reason }, 401);
   if (!env.ANTHROPIC_API_KEY) return json({ error: '서버에 ANTHROPIC_API_KEY가 설정되지 않았어요.' }, 501);
 
-  let text;
-  try { ({ text } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  let text, mode;
+  try { ({ text, mode } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
+  const qa = mode === 'qa';
   if (!text || typeof text !== 'string') return json({ error: '메모가 비어 있어요.' }, 400);
   if (text.length > 6000) return json({ error: '메모가 너무 길어요. 6,000자 이하로 나눠서 넣어 주세요.' }, 400);
 
@@ -56,7 +70,7 @@ async function handleCards({ request, env }) {
     body: JSON.stringify({
       model: env.CARD_MODEL || 'claude-sonnet-5-5',
       max_tokens: 8000,
-      system: SYSTEM_AUDIOBOOK,
+      system: qa ? SYSTEM_QA : SYSTEM_AUDIOBOOK,
       messages: [{ role: 'user', content: text }],
     }),
   });
@@ -72,6 +86,13 @@ async function handleCards({ request, env }) {
   try { items = JSON.parse(raw); } catch { return json({ error: 'AI 응답을 해석하지 못했어요. 다시 시도해 주세요.' }, 502); }
   if (!Array.isArray(items)) return json({ error: 'AI 응답 형식이 올바르지 않아요.' }, 502);
 
+  if (qa) {
+    const cards = items
+      .filter((c) => c && c.question && c.answer)
+      .map((c) => ({ question: String(c.question), answer: String(c.answer), explanation: String(c.explanation || '') }));
+    if (!cards.length) return json({ error: 'AI가 만든 카드가 비어 있어요. 다시 시도해 주세요.' }, 502);
+    return json({ cards });
+  }
   const cards = items
     .filter((c) => c && c.body)
     .map((c) => ({ kind: 'note', question: String(c.title || ''), answer: String(c.body), explanation: '' }));
