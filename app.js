@@ -373,7 +373,7 @@
     const ab = m === 'audiobook';
     $('#makeTitle').textContent = ab ? '메모를 오디오북으로 정리해요' : '메모를 카드로 바꿔요';
     $('#makeSub').textContent = ab
-      ? '붙여넣은 메모를 문단별로 나눠, 적은 그대로 순서대로 읽어줘요.'
+      ? '붙여넣은 메모를 AI가 듣기 좋게 항목별로 정리해, 순서대로 읽어줘요.'
       : '문제·정답·해설을 칸마다 적고 "카드 추가"를 누르세요. 여러 장 추가한 뒤 한 번에 저장해요.';
     $('#generate').textContent = ab ? '오디오북으로 정리' : '카드 추가';
     $('#generateHint').textContent = ab ? '변환 후 내용을 꼭 확인하고 저장하세요.' : '추가한 카드는 아래에서 고치거나 뺄 수 있어요. (Ctrl+Enter로도 추가)';
@@ -401,7 +401,7 @@
     toast(`카드 ${state.draft.length}장째를 추가했어요. 다 만들면 아래에서 저장하세요.`);
   }
 
-  // 오디오북: AI 없이 빈 줄로 나뉜 덩어리를 그대로 한 항목씩 (기호만 정리)
+  // AI를 못 쓸 때: 빈 줄로 나뉜 덩어리를 그대로 한 항목씩 (기호만 정리)
   function parseAudiobook(text) {
     const clean = (s) => s.replace(/^[\s#>*•\-·▶■●○]+/gm, '').replace(/\s*\n\s*/g, ' ').trim();
     const paras = text.split(/\n{2,}/).map(clean).filter(Boolean);
@@ -409,15 +409,53 @@
     return list.map((body) => ({ kind: 'note', question: '', answer: body, explanation: '' }));
   }
 
-  // AI 없이 브라우저에서 바로 변환합니다.
-  function generate() {
+  // 메모를 문단 단위로 묶어 한 번에 5,000자 이하로 보냅니다. (AI 호출 한도 대응)
+  function chunkMemo(text, max = 5000) {
+    const paras = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    const out = [];
+    let cur = '';
+    for (let p of paras) {
+      while (p.length > max) { if (cur) { out.push(cur); cur = ''; } out.push(p.slice(0, max)); p = p.slice(max); }
+      if (cur && (cur + '\n\n' + p).length > max) { out.push(cur); cur = p; } else cur = cur ? cur + '\n\n' + p : p;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  async function callCards(text) {
+    const res = await fetch('/api/cards', { method: 'POST', headers: await authHeaders(), body: JSON.stringify({ text }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'HTTP ' + res.status);
+    return j.cards;
+  }
+
+  // 오디오북: AI가 메모를 듣기 좋은 항목으로 나눠 정리합니다. AI를 쓸 수 없으면 문단 그대로 담습니다.
+  async function generate() {
     stopDictation();
     if (state.memoUploading) return toast('첨부를 올리는 중이에요. 끝나면 다시 눌러 주세요.');
     if (mode === 'qa') return addQaCard();
     const text = $('#memo').value.trim();
     if (!text) return toast('메모를 붙여넣거나 말로 입력해 주세요.');
+    const btn = $('#generate');
+    const idleLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = '정리 중…';
+    let cards;
+    try {
+      const parts = chunkMemo(text);
+      const all = [];
+      for (let i = 0; i < parts.length; i++) {
+        if (parts.length > 1) btn.textContent = `정리 중… ${i + 1} / ${parts.length}`;
+        all.push(...await callCards(parts[i]));
+      }
+      cards = all;
+    } catch (e) {
+      cards = parseAudiobook(text);
+      toast('AI 정리를 쓸 수 없어 메모를 문단 그대로 담았어요. (' + e.message + ')');
+    } finally {
+      btn.disabled = false; btn.textContent = idleLabel;
+    }
     const oldPaths = state.draft.flatMap((c) => mediaPaths(c.media)); // 이전 초안의 첨부는 새 초안을 만든 뒤 (쓰이지 않는 것만) 정리
-    state.draft = parseAudiobook(text); // 메모를 문단 그대로 담음
+    state.draft = cards;
     // 메모 화면에서 붙인 첨부를 만들어진 모든 카드에 붙임
     state.draft.forEach((c) => { c.media = state.memoMedia.map((m) => ({ ...m })); });
     renderDraft();
