@@ -49,10 +49,64 @@ const SYSTEM_QA = `당신은 자격증 시험 준비용 "오디오 학습 카드
 - 응답은 JSON 배열만 출력하세요. 설명, 코드블록 표시는 금지입니다.
 형식: [{"question":"...","answer":"...","explanation":"..."}]`;
 
+const stripFence = (s) => s.replace(/```json|```/g, '').trim();
+
+// 성공: { ok: true, raw } / 실패: { ok: false, status } (상세는 Cloudflare 로그에 남김)
+async function callClaude(env, system, text) {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': env.ANTHROPIC_API_KEY.trim(), // 붙여넣을 때 섞인 공백·줄바꿈 때문에 401이 나는 일을 막음
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: env.CARD_MODEL || 'claude-sonnet-5-5',
+        max_tokens: 8000,
+        system,
+        messages: [{ role: 'user', content: text }],
+      }),
+    });
+    if (!res.ok) {
+      console.error('Anthropic API error', res.status, (await res.text().catch(() => '')).slice(0, 500));
+      return { ok: false, status: res.status };
+    }
+    const data = await res.json();
+    return { ok: true, raw: stripFence((data.content || []).map((b) => b.text || '').join('')) };
+  } catch (e) {
+    console.error('Anthropic fetch failed', e);
+    return { ok: false, status: 503 };
+  }
+}
+
+async function callOpenAI(env, system, text) {
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + env.OPENAI_API_KEY.trim() },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || 'gpt-4o',
+        max_tokens: 8000,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: text }],
+      }),
+    });
+    if (!res.ok) {
+      console.error('OpenAI API error', res.status, (await res.text().catch(() => '')).slice(0, 500));
+      return { ok: false, status: res.status };
+    }
+    const data = await res.json();
+    return { ok: true, raw: stripFence(data.choices?.[0]?.message?.content || '') };
+  } catch (e) {
+    console.error('OpenAI fetch failed', e);
+    return { ok: false, status: 503 };
+  }
+}
+
 async function handleCards({ request, env }) {
   const auth = await requireUser(request, env);
   if (!auth.ok) return json({ error: auth.reason }, 401);
-  if (!env.ANTHROPIC_API_KEY) return json({ error: '서버에 ANTHROPIC_API_KEY가 설정되지 않았어요.' }, 501);
+  if (!env.ANTHROPIC_API_KEY && !env.OPENAI_API_KEY) return json({ error: '서버에 ANTHROPIC_API_KEY(또는 OPENAI_API_KEY)가 설정되지 않았어요.' }, 501);
 
   let text, mode;
   try { ({ text, mode } = await request.json()); } catch { return json({ error: '잘못된 요청이에요.' }, 400); }
@@ -60,28 +114,31 @@ async function handleCards({ request, env }) {
   if (!text || typeof text !== 'string') return json({ error: '메모가 비어 있어요.' }, 400);
   if (text.length > 6000) return json({ error: '메모가 너무 길어요. 6,000자 이하로 나눠서 넣어 주세요.' }, 400);
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: env.CARD_MODEL || 'claude-sonnet-5-5',
-      max_tokens: 8000,
-      system: qa ? SYSTEM_QA : SYSTEM_AUDIOBOOK,
-      messages: [{ role: 'user', content: text }],
-    }),
-  });
+  const system = qa ? SYSTEM_QA : SYSTEM_AUDIOBOOK;
 
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    return json({ error: 'AI 호출 실패 (' + res.status + ') ' + detail.slice(0, 200) }, 502);
+  // 1순위 Claude, 실패하면(키 오류·한도·서버 오류 등) OpenAI로 자동 전환합니다.
+  let raw = null, failStatus = 0;
+  if (env.ANTHROPIC_API_KEY) {
+    const r = await callClaude(env, system, text);
+    if (r.ok) raw = r.raw; else failStatus = r.status;
+  }
+  if (raw === null && env.OPENAI_API_KEY) {
+    const r = await callOpenAI(env, system, text);
+    if (r.ok) raw = r.raw; else failStatus = failStatus || r.status;
   }
 
-  const data = await res.json();
-  const raw = (data.content || []).map((b) => b.text || '').join('').replace(/```json|```/g, '').trim();
+  if (raw === null) {
+    const res = { status: failStatus };
+    const why = {
+      401: 'AI 서비스 인증키가 올바르지 않아요. 운영자에게 알려 주세요.',
+      403: 'AI 서비스 사용 권한이 없어요. 운영자에게 알려 주세요.',
+      404: 'AI 모델을 찾지 못했어요. 운영자에게 알려 주세요.',
+      429: '요청이 몰렸어요. 잠시 뒤 다시 시도해 주세요.',
+      529: 'AI 서비스가 혼잡해요. 잠시 뒤 다시 시도해 주세요.',
+    }[res.status] || (res.status >= 500 ? 'AI 서비스가 일시적으로 불안정해요. 잠시 뒤 다시 시도해 주세요.' : 'AI 호출에 실패했어요. (' + res.status + ')');
+    return json({ error: why }, 502);
+  }
+
   let items;
   try { items = JSON.parse(raw); } catch { return json({ error: 'AI 응답을 해석하지 못했어요. 다시 시도해 주세요.' }, 502); }
   if (!Array.isArray(items)) return json({ error: 'AI 응답 형식이 올바르지 않아요.' }, 502);
