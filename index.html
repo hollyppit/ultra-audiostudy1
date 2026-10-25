@@ -220,20 +220,6 @@
                   <option value="grass">풀숲·풀벌레 소리</option>
                   <option value="rain">빗소리</option>
                 </optgroup>
-                <optgroup label="음악 (기타·베이스)">
-                  <option value="guitar_calm">잔잔한 어쿠스틱 기타</option>
-                  <option value="guitar_lonely">외로운 행성 (기타)</option>
-                  <option value="guitar_flamenco">플라멩코풍 기타</option>
-                  <option value="lofi_guitar">로파이 기타 비트</option>
-                  <option value="coffee_jam">커피 (베이스 칠 잼)</option>
-                  <option value="easy_chill">이지 칠 루프</option>
-                </optgroup>
-                <optgroup label="음악 (힙합)">
-                  <option value="hiphop_overloaded">힙합 · 오버로디드</option>
-                  <option value="hiphop_summer">힙합 · 서머 (기타 비트)</option>
-                  <option value="hiphop_smoke">힙합 · 스모크 (펑키 루프)</option>
-                  <option value="hiphop_rap90">힙합 · 90BPM 베이스 비트</option>
-                </optgroup>
               </select>
               <button id="bgmTest" type="button" class="ghost">들어보기</button>
             </div>
@@ -263,15 +249,6 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
           <span id="micLabel">말로 메모하기</span>
         </button>
-      <details id="qaManual" class="qa-manual" hidden>
-        <summary>직접 한 장씩 적어서 추가하기</summary>
-        <div id="qaForm" class="qa-form">
-          <label class="field"><span>문제</span><textarea id="qaQ" rows="2" placeholder="예) 대한민국의 수도는?"></textarea></label>
-          <label class="field"><span>정답</span><textarea id="qaA" rows="2" placeholder="예) 서울"></textarea></label>
-          <label class="field"><span>해설 <span class="opt">(선택)</span></span><textarea id="qaE" rows="2" placeholder="예) 1394년부터 수도예요."></textarea></label>
-          <div class="row"><button id="qaAdd" type="button" class="ghost">카드 추가</button><span class="hint">Ctrl+Enter로도 추가돼요.</span></div>
-        </div>
-      </details>
         <button id="sttBtn" class="ghost mic" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/></svg>
           <span id="sttLabel">녹음 파일 → 글자</span>
@@ -286,6 +263,15 @@
         <button id="generate" class="primary">오디오북으로 정리</button>
         <span id="generateHint" class="hint">변환 후 내용을 꼭 확인하고 저장하세요.</span>
       </div>
+      <details id="qaManual" class="qa-manual" hidden>
+        <summary>직접 한 장씩 적어서 추가하기</summary>
+        <div id="qaForm" class="qa-form">
+          <label class="field"><span>문제</span><textarea id="qaQ" rows="2" placeholder="예) 대한민국의 수도는?"></textarea></label>
+          <label class="field"><span>정답</span><textarea id="qaA" rows="2" placeholder="예) 서울"></textarea></label>
+          <label class="field"><span>해설 <span class="opt">(선택)</span></span><textarea id="qaE" rows="2" placeholder="예) 1394년부터 수도예요."></textarea></label>
+          <div class="row"><button id="qaAdd" type="button" class="ghost">카드 추가</button><span class="hint">Ctrl+Enter로도 추가돼요.</span></div>
+        </div>
+      </details>
       <div id="draft" class="draft"></div>
     </section>
 
